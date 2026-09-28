@@ -264,9 +264,22 @@ Click into a text field and type. The badge in the bottom right corner of the fi
 
 Hover an underlined word to see its fix, and click the fix to apply it. Hover the badge to see all the changes in context. Click any change in that panel to apply only that one, or click "Accept all". Cmd+Z / Ctrl+Z undoes an applied fix.
 
-The extension checks `<textarea>` elements and rich text editors built on `contenteditable`. It skips single-line `<input>` fields, and fields where the page turned spell checking off (`spellcheck="false"`).
+The extension checks `<textarea>` elements and rich text editors built on `contenteditable`. It skips single-line `<input>` fields, and fields where the page turned spell checking off (`spellcheck="false"`). Gmail is the exception: it turns spell checking off because it has its own checker, so the extension checks its compose window anyway.
+
+In editors that make the whole page editable, like Notion, the extension checks the block the caret is in rather than the whole page.
+
+In emails, everything from the standard `-- ` signature line on is left out of the check, and so are blank lines.
+
+Google Docs doesn't work. It draws text on a canvas instead of putting it in the page, so there is no text for the extension to read.
 
 ## Troubleshooting
+
+<details>
+<summary>The badge turns orange with "The extension was updated"</summary>
+
+The extension was reloaded or updated after the tab was opened, and the old copy in that tab can't reach it anymore. Reload the tab.
+
+</details>
 
 <details>
 <summary>No badge appears</summary>
@@ -321,6 +334,13 @@ Open `chrome://on-device-internals` and check that the model is downloaded and y
 <summary>The extension wants to change a word you wrote on purpose</summary>
 
 Small models sometimes do. Don't click that suggestion, or undo it with Cmd+Z / Ctrl+Z. If it happens often in your language, try another model with the [benchmark](#benchmark).
+
+</details>
+
+<details>
+<summary>Something else is off and you want to see what the extension does</summary>
+
+Open the browser console on that site and run `localStorage.setItem("ai-grammar:debug", "1")`. You don't need the caret in the text field for this. Reload the tab and type in the field. The console then logs, with an `[ai-grammar]` prefix, which fields the extension watches, which one it checks or skips and why, which model it uses, and each state change. Include those lines when you [open an issue](https://github.com/florianlauer/ai-grammar/issues/new). `localStorage.removeItem("ai-grammar:debug")` turns it off.
 
 </details>
 

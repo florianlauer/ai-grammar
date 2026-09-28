@@ -102,6 +102,34 @@ function diffSegments(from: string, to: string) {
 const diffHunks = (from: string, to: string) =>
   diffSegments(from, to).flatMap((s) => ("hunk" in s ? [s.hunk] : []));
 
+// Models tend to drop blank lines, which a rich text editor would show as full-width "fixes".
+const keepLineBreaks = (from: string, to: string) =>
+  diffSegments(from, to)
+    .map((s) => {
+      if ("text" in s) {
+        return s.text;
+      }
+      const changed = s.removed + s.hunk.replacement;
+      return !changed.trim() && changed.includes("\n")
+        ? s.removed
+        : s.hunk.replacement;
+    })
+    .join("");
+
+// What the model gets to see: no surrounding blank lines, and nothing from the
+// standard "-- " signature delimiter line on (Gmail and most mail clients use it).
+const splitCheckable = (text: string) => {
+  const signature = text.search(/^-- ?$/m);
+  const end = signature === -1 ? text.length : signature;
+  const start = text.length - text.trimStart().length;
+  const stop = Math.max(start, text.slice(0, end).trimEnd().length);
+  return {
+    before: text.slice(0, start),
+    core: text.slice(start, stop),
+    after: text.slice(stop),
+  };
+};
+
 // A clickable "removed → added" chunk, used in the tooltip and the suggestion card.
 function renderChange(removed: string, added: string, onClick: () => void) {
   // a span, not a <button>, so the change keeps wrapping with the surrounding text
@@ -312,14 +340,50 @@ class OllamaProvider implements Provider {
   }
 }
 
+// These sites turn native spell checking off because they ship their own checker,
+// so spellcheck="false" there doesn't mean "not prose".
+const spellcheckOffAllowed = ["mail.google.com"];
+
 const isTextArea = (
   node: Node | EventTarget,
 ): node is HTMLTextAreaElement | HTMLElement => {
   return (
     ((node instanceof HTMLElement && node.contentEditable === "true") ||
       node instanceof HTMLTextAreaElement) &&
-    node.spellcheck
+    (node.spellcheck || spellcheckOffAllowed.includes(location.hostname))
   );
+};
+
+// Set localStorage["ai-grammar:debug"] = "1" on a site to trace why a field is or isn't checked.
+const debug = (...args: unknown[]) => {
+  if (localStorage.getItem("ai-grammar:debug")) {
+    console.log("[ai-grammar]", ...args);
+  }
+};
+
+const describe = (el: Element | null | undefined) =>
+  el
+    ? `${el.tagName.toLowerCase()}${el.id ? "#" + el.id : ""}.${[...el.classList].slice(0, 3).join(".")}`
+    : String(el);
+
+// Some editors (Notion) make the whole page one editing host, page UI included,
+// with each block as a nested contenteditable. Check the block around the caret.
+const checkUnit = (target: HTMLTextAreaElement | HTMLElement) => {
+  if (target instanceof HTMLTextAreaElement) {
+    return target;
+  }
+  const anchor = getSelection()?.anchorNode;
+  const anchorEl = anchor instanceof Element ? anchor : anchor?.parentElement;
+  const block = anchorEl?.closest<HTMLElement>('[contenteditable="true"]');
+  if (block && block !== target && target.contains(block) && isTextArea(block)) {
+    return block;
+  }
+  // page UI inside the host means the host is a whole page: wait until the caret is in a block
+  if (target.querySelector('[contenteditable="false"]')) {
+    debug("skip: page-level editor and caret not in a block", describe(anchorEl));
+    return null;
+  }
+  return target;
 };
 
 const recursivelyFindAllTextAreas = (node: Node) => {
@@ -858,6 +922,7 @@ class Control {
   };
 
   #setState(state: State) {
+    debug("state", state.type, state.type === "error" ? state.text : "");
     // offsets are only valid for the text they were computed on
     if (state.type !== "wrong") {
       this.#underlines.clear();
@@ -950,8 +1015,10 @@ class Control {
       return;
     }
 
+    const { before, core, after } = splitCheckable(text);
+
     // rarely works with single words
-    if (text.trim().split(/\s+/).length < 2) {
+    if (core.split(/\s+/).length < 2) {
       this.#setState({ type: "empty" });
       return;
     }
@@ -964,7 +1031,7 @@ class Control {
       return;
     }
 
-    const result = await resultFromPromise(this.#provider.fixGrammar(text));
+    const result = await resultFromPromise(this.#provider.fixGrammar(core));
 
     if (this.#text !== text) {
       return;
@@ -973,6 +1040,14 @@ class Control {
     if (!result.ok) {
       const error = result.error as any;
       console.warn(error);
+      // the extension was reloaded or updated after this tab loaded; this script is orphaned
+      if (!chrome.runtime?.id) {
+        this.#setState({
+          type: "error",
+          text: "The extension was updated. Reload this page to check your text again.",
+        });
+        return;
+      }
       const message = error?.message ?? error?.toString();
       this.#setState({
         type: "error",
@@ -983,7 +1058,7 @@ class Control {
       return;
     }
 
-    this.#result = result.value;
+    this.#result = before + keepLineBreaks(core, result.value.trim()) + after;
     this.#showResult();
   }
 
@@ -1043,7 +1118,7 @@ class Control {
   #handleErrorClick = () => {
     window
       .open(
-        "https://github.com/nucleartux/ai-grammar?tab=readme-ov-file#ai-grammar",
+        "https://github.com/florianlauer/ai-grammar#troubleshooting",
         "_blank",
       )
       ?.focus();
@@ -1100,38 +1175,58 @@ class Control {
 
 let control: Control | null = null;
 
+const logSkipped = (target: EventTarget, event: string) => {
+  if (target instanceof HTMLElement) {
+    debug(`${event}: not a checked field`, describe(target), {
+      contentEditable: target.contentEditable,
+      spellcheck: target.spellcheck,
+    });
+  }
+};
+
 const inputListener = (provider: Provider | null) => async (e: Event) => {
   const target = e.target;
 
   if (!target || !isTextArea(target)) {
+    if (target) logSkipped(target, "input");
     return;
   }
 
-  if (target === control?.textArea) {
+  const unit = checkUnit(target);
+  if (!unit) {
+    return;
+  }
+
+  if (unit === control?.textArea) {
     control.update();
     return;
   }
 
   control?.destroy();
 
-  control = new Control(target, provider);
+  debug("input: checking", describe(unit));
+  control = new Control(unit, provider);
   control.update();
 };
 
 const focusListener = (provider: Provider | null) => async (e: Event) => {
   const target = e.target;
 
-  if (control?.isSameElement(target)) {
+  if (!target || !isTextArea(target)) {
+    if (target) logSkipped(target, "focus");
     return;
   }
 
-  if (!target || !isTextArea(target)) {
+  // the caret may not be placed yet on focus; the next input picks the block then
+  const unit = checkUnit(target);
+  if (!unit || control?.isSameElement(unit)) {
     return;
   }
 
   control?.destroy();
 
-  control = new Control(target, provider);
+  debug("focus: checking", describe(unit));
+  control = new Control(unit, provider);
   control.update();
 };
 
@@ -1152,6 +1247,7 @@ const updateTargets = (provider: Provider | null) => {
       }
 
       targets.add(el as HTMLTextAreaElement | HTMLElement);
+      debug("watching", describe(el));
 
       el.addEventListener("input", inputListener(provider), true);
       el.addEventListener("focus", focusListener(provider), true);
@@ -1169,9 +1265,14 @@ const main = async () => {
       break;
     }
   }
+  debug(
+    "provider",
+    provider instanceof OllamaProvider ? "ollama" : provider ? "chrome built-in" : "none",
+  );
 
   const observer = new MutationObserver(() => {
     if (control?.textArea && !document.body.contains(control?.textArea)) {
+      debug("checked field left the page", describe(control.textArea));
       control?.destroy();
       control = null;
     }

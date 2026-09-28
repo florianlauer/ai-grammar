@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## Unreleased
+
+- fix: check Gmail's compose window, which turns native spell checking off
+- fix: in editors where the whole page is editable (Notion), check the block around the caret instead of the page
+- fix: say "reload this page" when the extension was updated after the tab loaded
+- fix: leave email signatures (after a `-- ` line) and blank lines out of the check
+- feat: debug traces in the console with `localStorage["ai-grammar:debug"] = "1"`
+- fix: the error panel's docs link points to this fork's troubleshooting section
+
 ## 0.6.0 [2026.09.28]
 
 - feat: underline suggestions in textarea and contenteditable fields
