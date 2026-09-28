@@ -27,7 +27,7 @@ This is a fork of [nucleartux/ai-grammar](https://github.com/nucleartux/ai-gramm
 
 ## What it does
 
-You type in a text field. When you stop for 800 ms, the extension sends the text to a local model and asks for the smallest set of fixes: spelling, grammar, punctuation, missing accents. It keeps your language, tone and technical terms. A French Slack message about a "PR" stays French and keeps "PR".
+You type in a text field. When you stop for half a second, the extension sends the text to a local model and asks for the smallest set of fixes: spelling, grammar, punctuation, missing accents. It keeps your language, tone and technical terms. A French Slack message about a "PR" stays French and keeps "PR".
 
 - Free, no account, no ads.
 - The model runs on your machine: [Ollama](https://ollama.com) or Chrome's built-in Gemini Nano.
@@ -39,7 +39,7 @@ You type in a text field. When you stop for 800 ms, the extension sends the text
 - Hovering an underlined word opens a card with its fix. Clicking the fix replaces that word and nothing else.
 - Hovering the badge in the corner of the field lists every suggestion. You can apply them one by one or all at once.
 - Edits go through the browser's editing commands, so Cmd+Z / Ctrl+Z undoes them and frameworks like React see the change.
-- The check waits until you stop typing for 800 ms instead of running on every keystroke.
+- The check waits until you stop typing for 500 ms instead of running on every keystroke.
 - Ollama uses `gemma4:e2b-it-qat` by default. It fixed every case in the [benchmark](#benchmark), in about half a second.
 - The extension asks Ollama to keep the model loaded, so checks don't pay a loading delay after a pause.
 - The overlays pick a light or dark look from the text color of the field, and respect `prefers-reduced-motion`.

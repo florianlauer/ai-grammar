@@ -102,15 +102,26 @@ function diffSegments(from: string, to: string) {
 const diffHunks = (from: string, to: string) =>
   diffSegments(from, to).flatMap((s) => ("hunk" in s ? [s.hunk] : []));
 
-// Models tend to drop blank lines, which a rich text editor would show as full-width "fixes".
-const keepLineBreaks = (from: string, to: string) =>
+// Typographic variants of the same character. Editors like Notion turn ' into ’ as you
+// type, so suggesting one over the other would loop forever.
+const typography = (text: string) =>
+  text
+    .replace(/[‘’ʼ´`]/g, "'")
+    .replace(/[“”„«»]/g, '"')
+    .replace(/[  ]/g, " ")
+    .replace(/\s*"\s*/g, '"');
+
+// Keeps the user's version where the model only changed cosmetics: dropped blank lines,
+// which a rich text editor would show as full-width "fixes", or typographic variants.
+const keepCosmetics = (from: string, to: string) =>
   diffSegments(from, to)
     .map((s) => {
       if ("text" in s) {
         return s.text;
       }
       const changed = s.removed + s.hunk.replacement;
-      return !changed.trim() && changed.includes("\n")
+      const onlyLineBreaks = !changed.trim() && changed.includes("\n");
+      return onlyLineBreaks || typography(s.removed) === typography(s.hunk.replacement)
         ? s.removed
         : s.hunk.replacement;
     })
@@ -838,6 +849,9 @@ class Control {
   #underlines: Underlines;
   #card: SuggestionCard;
   #glyph: string = "";
+  #textObserver: MutationObserver | null = null;
+  // bumped on every update, so a slower, older check can tell it was superseded
+  #run = 0;
 
   constructor(
     public textArea: HTMLTextAreaElement | HTMLElement,
@@ -886,6 +900,20 @@ class Control {
     this.#updateInterval = setInterval(() => {
       control?.updatePosition();
     }, 60);
+
+    // some editors (Notion) apply deletions themselves without firing "input"
+    if (!(textArea instanceof HTMLTextAreaElement)) {
+      this.#textObserver = new MutationObserver(() => {
+        if (!this.#applying && this.#readText() !== this.#text) {
+          this.update();
+        }
+      });
+      this.#textObserver.observe(textArea, {
+        characterData: true,
+        childList: true,
+        subtree: true,
+      });
+    }
   }
 
   #showTooltip() {
@@ -1002,6 +1030,7 @@ class Control {
     }
 
     const text = this.#readText();
+    const run = ++this.#run;
 
     this.#text = text;
 
@@ -1026,14 +1055,14 @@ class Control {
     this.#setState({ type: "loading" });
 
     // wait for a typing pause instead of querying the model on every keystroke
-    await new Promise((resolve) => setTimeout(resolve, 800));
-    if (this.#text !== text) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    if (run !== this.#run || this.#text !== text) {
       return;
     }
 
     const result = await resultFromPromise(this.#provider.fixGrammar(core));
 
-    if (this.#text !== text) {
+    if (run !== this.#run || this.#text !== text) {
       return;
     }
 
@@ -1058,7 +1087,7 @@ class Control {
       return;
     }
 
-    this.#result = before + keepLineBreaks(core, result.value.trim()) + after;
+    this.#result = before + keepCosmetics(core, result.value.trim()) + after;
     this.#showResult();
   }
 
@@ -1156,6 +1185,7 @@ class Control {
   }
 
   destroy() {
+    this.#textObserver?.disconnect();
     this.#button.remove();
     this.#tooltip.destroy();
     this.#underlines.destroy();

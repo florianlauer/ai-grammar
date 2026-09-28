@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## Unreleased
+
+- fix: recheck when an editor changes the text without an input event (deleting in Notion), so old suggestions don't linger
+- fix: a check superseded by a newer one no longer shows an "Aborted" error
+- feat: check after a 500 ms typing pause instead of 800 ms
+- fix: ignore typographic variants (’ vs ', « » vs "", non-breaking spaces), which looped in editors that curl quotes as you type
+
 ## 0.7.0 [2026.09.29]
 
 - fix: check Gmail's compose window, which turns native spell checking off
