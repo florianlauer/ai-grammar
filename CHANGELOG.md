@@ -1,6 +1,6 @@
 # CHANGELOG
 
-## Unreleased
+## 0.7.1 [2026.09.29]
 
 - fix: recheck when an editor changes the text without an input event (deleting in Notion), so old suggestions don't linger
 - fix: a check superseded by a newer one no longer shows an "Aborted" error
