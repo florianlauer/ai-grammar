@@ -1,6 +1,6 @@
 # CHANGELOG
 
-## Unreleased
+## 0.7.0 [2026.09.29]
 
 - fix: check Gmail's compose window, which turns native spell checking off
 - fix: in editors where the whole page is editable (Notion), check the block around the caret instead of the page
