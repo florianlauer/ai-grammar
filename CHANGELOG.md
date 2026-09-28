@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## 0.6.0 [2026.09.28]
+
+- feat: underline suggestions in textarea and contenteditable fields
+- feat: apply one suggestion at a time from a hover card or the suggestions panel
+- feat: undoable edits through the browser's editing commands
+- feat: wait 800 ms after typing before checking
+- feat: switch the Ollama model to gemma4:e2b-it-qat and keep it loaded
+- feat: new overlay styles with light and dark themes
+- feat: add an Ollama grammar benchmark in `bench/`
+- fix: pass a JSON schema to Ollama's `format` (the server returned 500)
+
 ## 0.3.1 [2024.10.17]
 
 - fix: support latest chrome version
