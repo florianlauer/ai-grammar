@@ -15,6 +15,7 @@ This is a fork of [nucleartux/ai-grammar](https://github.com/nucleartux/ai-gramm
 - [What this fork changes](#what-this-fork-changes)
 - [Requirements](#requirements)
 - [Install the extension](#install-the-extension)
+  - [One line agent install](#one-line-agent-install)
 - [Set up a model](#set-up-a-model)
 - [Using it](#using-it)
 - [Troubleshooting](#troubleshooting)
@@ -62,7 +63,17 @@ The Ollama path is tested on a MacBook Pro M2 Pro with 32 GB of RAM, in Arc. The
 
 ## Install the extension
 
-There are two ways. The zip needs nothing but the browser. Building from source needs [git](https://git-scm.com) and [Node.js](https://nodejs.org) 18 or newer (the build is tested with Node 26), and is the way to go if you want to change the model or the code.
+There are three ways. An agent can do it for you. The zip needs nothing but the browser. Building from source needs [git](https://git-scm.com) and [Node.js](https://nodejs.org) 18 or newer (the build is tested with Node 26), and is the way to go if you want to change the model or the code.
+
+### One line agent install
+
+If you use a coding agent with shell access (Claude Code, Codex, Cursor and the like), paste this into it:
+
+```text
+Install the ai-grammar browser extension on this machine by following https://raw.githubusercontent.com/florianlauer/ai-grammar/main/AGENT_INSTALL.md
+```
+
+The agent checks or installs Ollama, downloads the model, sets `OLLAMA_ORIGINS`, checks that Ollama accepts the extension, and unzips the latest release into `~/Extensions/ai-grammar`. It asks before installing software, using `sudo` or changing how Ollama starts. You still load the extension in the browser yourself, and the agent tells you what to click. [AGENT_INSTALL.md](./AGENT_INSTALL.md) lists every step it follows.
 
 ### From a release zip
 
@@ -124,7 +135,8 @@ ollama pull gemma4:e2b-it-qat
 
 Ollama refuses requests coming from browser extensions unless their origin is listed in `OLLAMA_ORIGINS`. Without it every check fails with a 403. The variable has to be set on the process that runs the server, and how you do that depends on how you start Ollama.
 
-macOS, with the menu bar app:
+<details>
+<summary>macOS, with the menu bar app</summary>
 
 ```shell
 launchctl setenv OLLAMA_ORIGINS "chrome-extension://*"
@@ -132,7 +144,10 @@ launchctl setenv OLLAMA_ORIGINS "chrome-extension://*"
 
 Then quit Ollama from the menu bar and open it again. Two catches. `launchctl setenv` only reaches apps that launchd starts, so it does nothing for an `ollama serve` typed in a terminal. And it is forgotten when the Mac restarts. For a setup that survives reboots, use the LaunchAgent in step 5.
 
-Linux, with the systemd service from the install script:
+</details>
+
+<details>
+<summary>Linux, with the systemd service from the install script</summary>
 
 ```shell
 sudo systemctl edit ollama.service
@@ -150,13 +165,23 @@ sudo systemctl daemon-reload
 sudo systemctl restart ollama
 ```
 
-Windows: quit Ollama from the taskbar. Open the settings, search for "environment variables", and choose "Edit environment variables for your account". Add a variable named `OLLAMA_ORIGINS` with the value `chrome-extension://*`, then start Ollama again from the Start menu.
+</details>
 
-Any OS, running the server yourself:
+<details>
+<summary>Windows</summary>
+
+Quit Ollama from the taskbar. Open the settings, search for "environment variables", and choose "Edit environment variables for your account". Add a variable named `OLLAMA_ORIGINS` with the value `chrome-extension://*`, then start Ollama again from the Start menu.
+
+</details>
+
+<details>
+<summary>Any OS, running <code>ollama serve</code> yourself</summary>
 
 ```shell
 OLLAMA_ORIGINS="chrome-extension://*" ollama serve
 ```
+
+</details>
 
 `chrome-extension://*` lets every installed extension call your local Ollama. If you'd rather allow only this one, copy its ID from the extensions page and use `chrome-extension://<id>`. The ID changes if you load the `build` folder from another path.
 
@@ -170,7 +195,12 @@ curl -s -o /dev/null -w "%{http_code}\n" -H "Origin: chrome-extension://test" ht
 
 **5. Optional: start Ollama at login (macOS).**
 
-The Windows app and the Linux service already start at boot. On macOS, if you don't use the menu bar app, save this as `~/Library/LaunchAgents/com.ollama.serve.plist`. Adjust the path to `ollama` with the output of `which ollama`:
+The Windows app and the Linux service already start at boot.
+
+<details>
+<summary>LaunchAgent for macOS</summary>
+
+On macOS, if you don't use the menu bar app, save this as `~/Library/LaunchAgents/com.ollama.serve.plist`. Adjust the path to `ollama` with the output of `which ollama`:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -205,6 +235,8 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.ollama.serve.plist
 
 Don't run it alongside the menu bar app. Both try to use port 11434.
 
+</details>
+
 **About memory.** The extension asks Ollama to keep the model loaded forever (`keep_alive: -1`), which avoids a few seconds of loading after each pause. The cost is 3.8 GB of memory held while Ollama runs. To free it without stopping Ollama:
 
 ```shell
@@ -236,21 +268,61 @@ The extension checks `<textarea>` elements and rich text editors built on `conte
 
 ## Troubleshooting
 
-**No badge appears.** Reload the tab, since the extension doesn't attach to pages opened before it was installed. Then check that the field is a textarea or a rich text editor, not a single-line input, and that the site doesn't disable spell checking on it.
+<details>
+<summary>No badge appears</summary>
 
-**The badge turns orange with a 403.** Ollama doesn't allow the extension's origin. Go back to [step 3](#option-a-ollama) and run the `curl` check from step 4. On macOS, a restart erases what `launchctl setenv` set.
+Reload the tab, since the extension doesn't attach to pages opened before it was installed. Then check that the field is a textarea or a rich text editor, not a single-line input, and that the site doesn't disable spell checking on it.
 
-**Orange badge, "model not found".** The model isn't downloaded, or has another name. Run `ollama pull gemma4:e2b-it-qat`, or set `ollamaModel` to a model you have (see [Changing the model](#changing-the-model)).
+</details>
 
-**`ollama pull` fails, or Ollama doesn't know the model.** Your Ollama server is older than 0.34. Update it, then quit and restart it. After a Homebrew upgrade, the old server keeps running until you restart it, and `ollama --version` warns that client and server versions differ.
+<details>
+<summary>The badge turns orange with a 403</summary>
 
-**Ollama is running but nothing happens.** The tab was opened before Ollama started, so the extension picked Chrome's built-in model or nothing. Reload the tab.
+Ollama doesn't allow the extension's origin. Go back to [step 3](#option-a-ollama) and run the `curl` check from step 4. On macOS, a restart erases what `launchctl setenv` set.
 
-**The first check is slow.** Ollama is loading the model into memory, usually a few seconds. Later checks take about half a second.
+</details>
 
-**Chrome built-in AI never answers.** Open `chrome://on-device-internals` and check that the model is downloaded and your device is marked eligible.
+<details>
+<summary>Orange badge, "model not found"</summary>
 
-**The extension wants to change a word you wrote on purpose.** Small models sometimes do. Don't click that suggestion, or undo it with Cmd+Z / Ctrl+Z. If it happens often in your language, try another model with the [benchmark](#benchmark).
+The model isn't downloaded, or has another name. Run `ollama pull gemma4:e2b-it-qat`, or set `ollamaModel` to a model you have (see [Changing the model](#changing-the-model)).
+
+</details>
+
+<details>
+<summary><code>ollama pull</code> fails, or Ollama doesn't know the model</summary>
+
+Your Ollama server is older than 0.34. Update it, then quit and restart it. After a Homebrew upgrade, the old server keeps running until you restart it, and `ollama --version` warns that client and server versions differ.
+
+</details>
+
+<details>
+<summary>Ollama is running but nothing happens</summary>
+
+The tab was opened before Ollama started, so the extension picked Chrome's built-in model or nothing. Reload the tab.
+
+</details>
+
+<details>
+<summary>The first check is slow</summary>
+
+Ollama is loading the model into memory, usually a few seconds. Later checks take about half a second.
+
+</details>
+
+<details>
+<summary>Chrome built-in AI never answers</summary>
+
+Open `chrome://on-device-internals` and check that the model is downloaded and your device is marked eligible.
+
+</details>
+
+<details>
+<summary>The extension wants to change a word you wrote on purpose</summary>
+
+Small models sometimes do. Don't click that suggestion, or undo it with Cmd+Z / Ctrl+Z. If it happens often in your language, try another model with the [benchmark](#benchmark).
+
+</details>
 
 ## Changing the model
 
