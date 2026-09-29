@@ -1,6 +1,6 @@
 # CHANGELOG
 
-## Unreleased
+## 0.10.0 [2026.09.29]
 
 - feat: tone presets on the rewrite card: "More formal", "Friendlier", "More confident", "Shorter"
 - feat: the rewrite card says how formal the text sounds, from "Very casual" to "Very formal"
