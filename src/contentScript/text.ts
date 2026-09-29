@@ -69,13 +69,23 @@ const touches = (hunk: Hunk, ranges: { start: number; end: number }[]) =>
       : hunk.start < r.end && r.start < hunk.end,
   );
 
+// letters and digits only, so "review." and "review," are the same word as "review"
+const inWord = (c: string | undefined) => !!c && /[\p{L}\p{N}]/u.test(c);
+
+// Offsets widened to the whole words they cut into. A boundary on a space cuts nothing.
+export const wholeWords = (text: string, start: number, end: number) => {
+  let s = start;
+  let e = end;
+  if (inWord(text[s])) while (inWord(text[s - 1])) s--;
+  if (inWord(text[e - 1])) while (inWord(text[e])) e++;
+  return { start: s, end: e };
+};
+
 // A hunk widened to the whole word around it, so ignoring "add a comma after merci"
 // doesn't ignore every comma.
 export const changeOf = (text: string, { start, end, replacement }: Hunk): Change => {
   let s = start;
   let e = end;
-  // letters and digits only, so "review." and "review," are the same change as "review"
-  const inWord = (c: string | undefined) => !!c && /[\p{L}\p{N}]/u.test(c);
   // an insertion takes the word it touches; a change only grows into a word it cuts, so
   // deleting "the " before "cat" isn't stored as a change of "cat"
   const insertion = start === end;
@@ -137,3 +147,129 @@ export const dictionaryCandidate = (removed: string) => {
   const word = removed.trim().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
   return word && !/\s/.test(word) ? word : null;
 };
+
+const frenchWords =
+  /(?<![\p{L}'’])(je|j|tu|il|nous|vous|on|le|la|les|des|du|un|une|est|et|que|qui|pour|pas|sur|avec|dans|mais|ça|ce|c|à)(?![\p{L}])/giu;
+const englishWords =
+  /(?<![\p{L}'’])(i|you|we|he|she|they|the|a|an|is|are|was|and|to|of|that|for|not|with|this|it|have|be|if|but|in)(?![\p{L}'’])/giu;
+
+// Counts common function words. Good enough to tell French from English in a sentence or
+// two, which is all the rewrite checks need. Unsure means null.
+export const languageOf = (text: string) => {
+  const fr = text.match(frenchWords)?.length ?? 0;
+  const en = text.match(englishWords)?.length ?? 0;
+  if (fr === en) {
+    return null;
+  }
+  return fr > en ? "French" : "English";
+};
+
+const words = (text: string) => text.match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu) ?? [];
+
+// Things a rewrite has to carry over untouched.
+const essentials = (text: string, dictionary: string[]) => [
+  ...(text.match(/https?:\/\/\S+[^\s.,;:!?)]|www\.\S+[^\s.,;:!?)]|\S+@\S+\.\w+/g) ?? []),
+  ...(text.match(/\d+(?:[.,:]\d+)*/g) ?? []),
+  ...dictionary.filter((w) => protectedRanges(text, [w]).length > 0),
+  // a capital that doesn't start a sentence is a name, a product or an acronym ("I" aside)
+  ...[...text.matchAll(/(?<![.!?:\n]\s*|^\s*)(?<=\s)\p{Lu}[\p{L}\p{N}'’-]*/gu)]
+    .map((m) => m[0])
+    .filter((w) => w !== "I" && !/^I['’]/.test(w)),
+];
+
+const brackets = /[[\]{}<>]/g;
+
+// Why a model's rewrite can't be shown, or null when it can. Small models drop numbers,
+// translate the text, or leave "[optional: reason]" placeholders.
+export const rejectVariant = (original: string, variant: string, dictionary: string[] = []) => {
+  const v = variant.trim();
+  if (!v || v === original.trim()) {
+    return "unchanged";
+  }
+  const missing = essentials(original, dictionary).find((e) => !v.includes(e));
+  if (missing) {
+    return `dropped “${missing}”`;
+  }
+  const added = (v.match(brackets) ?? []).find((b) => !original.includes(b));
+  if (added || v.includes("**")) {
+    return "added brackets or markup";
+  }
+  const from = languageOf(original);
+  const to = languageOf(v);
+  if (from && to && from !== to) {
+    return `switched to ${to}`;
+  }
+  return null;
+};
+
+// Rewrites that pass the checks, without duplicates.
+export const keepVariants = (original: string, variants: string[], dictionary: string[] = []) => [
+  ...new Set(
+    variants.map((v) => v.trim()).filter((v) => rejectVariant(original, v, dictionary) === null),
+  ),
+];
+
+// Sentences over `limit` words, as offsets. Found by counting, with no model call.
+export const longSentences = (text: string, limit = 30) =>
+  // a stop only ends a sentence before a space, so "v2.3" and URLs don't split one
+  [...text.matchAll(/\S[^\n]*?(?:[.!?…]+(?=\s|$)|$)/gmu)]
+    .filter((m) => words(m[0]).length > limit)
+    .map((m) => ({ start: m.index!, end: m.index! + m[0].trimEnd().length }));
+
+export const wordCount = (text: string) => words(text).length;
+
+// The rest of the sentence around [start, end): what a rewrite of part of it has to fit between.
+export const sentenceAround = (text: string, start: number, end: number) => {
+  const head = text.slice(0, start);
+  let from = 0;
+  for (const m of head.matchAll(/[.!?…]+\s+|\n/g)) {
+    from = m.index! + m[0].length;
+  }
+  // a part that ends its sentence has nothing after it
+  if (/[.!?…]\s*$/.test(text.slice(start, end))) {
+    return { before: head.slice(from), after: "" };
+  }
+  const tail = text.slice(end);
+  const stop = tail.match(/[.!?…]+(?=\s|$)|\n/);
+  const to = stop ? stop.index! + (stop[0] === "\n" ? 0 : stop[0].length) : tail.length;
+  return { before: head.slice(from), after: tail.slice(0, to) };
+};
+
+const hasWords = (text: string) => /[\p{L}\p{N}]/u.test(text);
+
+const firstWord = (text: string) => words(text)[0] ?? "";
+const lastWord = (text: string) => words(text).at(-1) ?? "";
+const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+
+// Makes a rewrite of part of a sentence fit back in place. Small models repeat the word
+// just before the part, capitalise it, or end it with a full stop.
+export const fitFragment = (
+  variant: string,
+  { part, before, after }: { part: string; before: string; after: string },
+) => {
+  let v = variant.trim();
+  const prev = lastWord(before);
+  if (prev && same(firstWord(v), prev) && !same(firstWord(part), prev)) {
+    v = v.slice(v.search(/\s/) + 1).trimStart();
+  }
+  const next = firstWord(after);
+  if (next && same(lastWord(v), next) && !same(lastWord(part), next)) {
+    v = v.replace(/\s*[\p{L}\p{N}][\p{L}\p{N}'’-]*[.!?…]*$/u, "");
+  }
+  const word = firstWord(v);
+  if (
+    hasWords(before) &&
+    /^\p{Ll}/u.test(part) &&
+    /^\p{Lu}\p{Ll}+$/u.test(word) &&
+    !(before + part).includes(word)
+  ) {
+    v = v[0].toLowerCase() + v.slice(1);
+  }
+  if (/^\s*[\p{L}\p{N}]/u.test(after) && !/[.!?…]$/.test(part)) {
+    v = v.replace(/[.!?…]+$/, "");
+  }
+  return v;
+};
+
+export const isFragment = ({ before, after }: { before: string; after: string }) =>
+  hasWords(before) || hasWords(after);

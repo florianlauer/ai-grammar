@@ -1,31 +1,36 @@
 import ollama, { GenerateResponse, Ollama } from "ollama/browser";
 
-let abortController = new AbortController();
+// One per kind of request, so a new check cancels the previous check but not a rewrite the
+// user is waiting for.
+type Channel = "check" | "rewrite";
+const controllers: Record<Channel, AbortController> = {
+  check: new AbortController(),
+  rewrite: new AbortController(),
+};
+
+const restart = (channel: Channel = "check") => {
+  controllers[channel].abort();
+  return (controllers[channel] = new AbortController()).signal;
+};
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const fetchWithSignal = (...args: Parameters<typeof fetch>) => {
-  return fetch(args[0], {
-    ...args[1],
-    signal: abortController.signal,
-  });
-};
-
 const ollamaGenerate = (
   args: Parameters<typeof ollama.generate>[0],
+  signal: AbortSignal,
 ): Promise<GenerateResponse> => {
   const ollama = new Ollama({
-    fetch: fetchWithSignal,
+    fetch: (input, init) => fetch(input, { ...init, signal }),
   });
   return ollama.generate(args).catch((e) => {
     console.warn(e);
     const message: string | undefined = (e as any)?.message;
     if (message === "unexpected server status: llm server loading model") {
       return sleep(3000).then(() => {
-        if (abortController.signal.aborted) {
+        if (signal.aborted) {
           throw new Error("Aborted");
         }
-        return ollamaGenerate(args);
+        return ollamaGenerate(args, signal);
       });
     }
     throw e;
@@ -50,9 +55,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.type === "ollama.generate") {
-    abortController.abort();
-    abortController = new AbortController();
-    ollamaGenerate(request.data)
+    ollamaGenerate(request.data, restart(request.channel))
       .then((result) => sendResponse(result))
       // e.g. "model not found" after picking a model that isn't pulled
       .catch((e) => sendResponse({ error: String(e?.message ?? e) }));
@@ -84,14 +87,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.type === "gemini.generate") {
-    abortController.abort();
-    abortController = new AbortController();
-    LanguageModel.create({
-      signal: abortController.signal,
-    }).then((session) => {
+    const signal = restart(request.channel);
+    LanguageModel.create({ signal }).then((session) => {
       session
         .prompt(request.data.text, {
-          signal: abortController.signal,
+          signal,
           ...request.data,
         })
         .then((data) => {

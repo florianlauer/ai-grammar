@@ -36,7 +36,7 @@ Words the user wants left alone: product names, jargon, "PR", "review".
 
 Unlimited suggestions come for free: there is no server, no account and no quota.
 
-## 3. Rewrite a sentence
+## 3. Rewrite a sentence (done)
 
 On demand, never while typing: 1.7 s per sentence is fine after a click and too slow to run on every pause.
 
@@ -45,6 +45,13 @@ On demand, never while typing: 1.7 s per sentence is fine after a click and too 
 - Sentences longer than about 30 words get a light underline in the rewrite color, found by counting words, with no model call. Hovering it offers the same card.
 - Before a variant is shown, the extension checks it. It must keep the numbers, names, URLs and dictionary words of the original, stay in the same language, and contain no brackets the original didn't have. Variants that fail are dropped. If none pass, the card says so.
 - The benchmark gets a rewrite set that grades exactly these rules.
+
+What shipping it taught:
+
+- The prompt has to name the language. "Keep the original language" still got a French sentence translated to English, and "a French text gets French versions" turned an English one into French. The extension now counts common French and English words and writes "The text is in French" into the prompt.
+- A selection is often part of a sentence. The model gets the words before and after it, and the extension trims what small models add anyway: the word just before repeated, a capital, a final full stop. A selection that cuts a word is widened to the whole word.
+- Hovering a long sentence only offers a rewrite. Running the model on hover would start it every time the pointer crosses the text.
+- `bench/rewrite-bench.mjs`: gemma4 kept 30 of 30 variants on 10 texts with a 1.5 s median. qwen3.5:4b kept 28, losing two to "dix" for "10", and took 2.6 s.
 
 ## 4. Change the tone
 
