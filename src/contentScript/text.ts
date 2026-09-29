@@ -73,11 +73,14 @@ const touches = (hunk: Hunk, ranges: { start: number; end: number }[]) =>
 const inWord = (c: string | undefined) => !!c && /[\p{L}\p{N}]/u.test(c);
 
 // Offsets widened to the whole words they cut into. A boundary on a space cuts nothing.
+// An apostrophe or hyphen between letters is part of the word: "aujourd'hui", "peut-être".
 export const wholeWords = (text: string, start: number, end: number) => {
+  const joined = (c: string | undefined, next: string | undefined) =>
+    inWord(c) || (!!c && /['’-]/.test(c) && inWord(next));
   let s = start;
   let e = end;
-  if (inWord(text[s])) while (inWord(text[s - 1])) s--;
-  if (inWord(text[e - 1])) while (inWord(text[e])) e++;
+  if (joined(text[s], text[s + 1])) while (joined(text[s - 1], text[s - 2])) s--;
+  if (joined(text[e - 1], text[e - 2])) while (joined(text[e], text[e + 1])) e++;
   return { start: s, end: e };
 };
 
@@ -172,7 +175,12 @@ const essentials = (text: string, dictionary: string[]) => [
   ...(text.match(/\d+(?:[.,:]\d+)*/g) ?? []),
   ...dictionary.filter((w) => protectedRanges(text, [w]).length > 0),
   // a capital that doesn't start a sentence is a name, a product or an acronym ("I" aside)
-  ...[...text.matchAll(/(?<![.!?:\n]\s*|^\s*)(?<=\s)\p{Lu}[\p{L}\p{N}'’-]*/gu)]
+  // not after a stop (and a closing quote), at the start, or after a list bullet
+  ...[
+    ...text.matchAll(
+      /(?<![.!?:…\n]["'”»)\]]*\s*|^\s*|(?:^|\n)[ \t]*[-*•][ \t]+)(?<=\s)\p{Lu}[\p{L}\p{N}'’-]*/gu,
+    ),
+  ]
     .map((m) => m[0])
     .filter((w) => w !== "I" && !/^I['’]/.test(w)),
 ];
@@ -265,7 +273,8 @@ export const fitFragment = (
   ) {
     v = v[0].toLowerCase() + v.slice(1);
   }
-  if (/^\s*[\p{L}\p{N}]/u.test(after) && !/[.!?…]$/.test(part)) {
+  // whatever follows ("." or ", then…") already carries the punctuation
+  if (after.trim() && !/[.!?…]$/.test(part)) {
     v = v.replace(/[.!?…]+$/, "");
   }
   return v;

@@ -2,8 +2,8 @@
 
 | Model | Cases with a variant shown | Variants kept | Median latency |
 |---|---|---|---|
-| gemma4:e2b-it-qat | 10/10 | 30/30 | 1.49s |
-| qwen3.5:4b | 10/10 | 28/30 | 2.58s |
+| gemma4:e2b-it-qat | 10/10 | 30/30 | 1.55s |
+| qwen3.5:4b | 10/10 | 28/30 | 2.74s |
 
 ### 1. `Je pense qu'il faudrait qu'on se voie la semaine prochaine pour en discuter parce que sinon on va encore perdre du temps sur des sujets qui ont déjà été tranchés la dernière fois et ça commence à faire beaucoup de réunions pour pas grand chose au final.`
 
