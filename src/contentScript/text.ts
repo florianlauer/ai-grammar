@@ -76,8 +76,11 @@ export const changeOf = (text: string, { start, end, replacement }: Hunk): Chang
   let e = end;
   // letters and digits only, so "review." and "review," are the same change as "review"
   const inWord = (c: string | undefined) => !!c && /[\p{L}\p{N}]/u.test(c);
-  while (inWord(text[s - 1])) s--;
-  while (inWord(text[e])) e++;
+  // an insertion takes the word it touches; a change only grows into a word it cuts, so
+  // deleting "the " before "cat" isn't stored as a change of "cat"
+  const insertion = start === end;
+  if (insertion || inWord(text[s])) while (inWord(text[s - 1])) s--;
+  if (insertion || inWord(text[e - 1])) while (inWord(text[e])) e++;
   return {
     from: text.slice(s, e),
     to: text.slice(s, start) + replacement + text.slice(end, e),
