@@ -353,7 +353,7 @@ Open the browser console on that site and run `localStorage.setItem("ai-grammar:
 
 Click the extension's toolbar icon, or "Settings" at the bottom of the suggestions panel. The page has three sections:
 
-- **Model.** The Ollama model used for every check, picked from the models Ollama has. The change applies to the next check, with no reload. Run the [benchmark](#benchmark) before switching: some models rewrite whole sentences, translate jargon, or add markdown around their answer. With Chrome's built-in model there is nothing to pick.
+- **Model.** The Ollama model used for every check, picked from the models Ollama has. Picking one unloads the previous model from Ollama to free its memory, then loads the new one while the page shows a loader, so the next check doesn't wait for it. No reload needed. Run the [benchmark](#benchmark) before switching: some models rewrite whole sentences, translate jargon, or add markdown around their answer. With Chrome's built-in model there is nothing to pick.
 - **Dictionary.** Words the extension never changes. Case counts: with "Sencrop" in the dictionary, "Sencrop" is kept and "sencrop" is still corrected. The prompt asks the model to leave these words alone, and the extension also drops any suggestion that touches one, because a small model doesn't follow every instruction.
 - **Turned off on.** Sites where the extension checks nothing. It accepts a hostname or a pasted URL.
 

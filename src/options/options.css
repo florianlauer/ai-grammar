@@ -87,6 +87,57 @@ select.opt__field {
   max-width: 320px;
 }
 
+.opt__load {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--aig-muted);
+  font-size: 14px;
+}
+
+.opt__load[hidden] {
+  display: none;
+}
+
+.opt__load::before {
+  content: "";
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+}
+
+.opt__load[data-state="loading"]::before {
+  border: 2px solid var(--aig-hairline);
+  border-top-color: var(--aig-muted);
+  animation: aig-spin 0.9s linear infinite;
+}
+
+.opt__load[data-state="ready"] {
+  color: var(--aig-add-ink);
+}
+
+.opt__load[data-state="ready"]::before {
+  background: var(--aig-ok);
+  transform: scale(0.6);
+}
+
+.opt__load[data-state="error"] {
+  color: var(--aig-accent-ink);
+}
+
+.opt__load[data-state="error"]::before {
+  background: var(--aig-accent);
+  transform: scale(0.6);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .opt__load[data-state="loading"]::before {
+    animation-duration: 2.4s;
+  }
+}
+
 .opt__add {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

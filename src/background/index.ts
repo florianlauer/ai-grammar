@@ -60,6 +60,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
+  // Frees the previous model's memory, then loads the new one so the next check is fast.
+  // The default client has no abort signal, so a check starting meanwhile can't cancel this.
+  if (request.type === "ollama.switch") {
+    const { from, to } = request.data as { from: string | null; to: string };
+    Promise.resolve(from && ollama.generate({ model: from, prompt: "", keep_alive: 0 }))
+      .catch(() => {}) // not loaded or not installed: nothing to free
+      .then(() => ollama.generate({ model: to, prompt: "", keep_alive: -1 }))
+      .then(() => sendResponse({ ok: true }))
+      .catch((e) => sendResponse({ error: String(e?.message ?? e) }));
+    return true;
+  }
+
   if (request.type === "gemini.supported") {
     LanguageModel.availability()
       .then(() => {
