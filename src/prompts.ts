@@ -51,7 +51,16 @@ export const tones = {
     label: "Shorter",
     instruction: "so it is shorter: cut filler words and repetition, and keep every piece of information",
   },
+  // English only; rewritePrompt adds who the writer is
+  natural: {
+    label: "More natural",
+    instruction: "so it sounds natural to a native English speaker, and keep the writer's meaning",
+  },
 } as const;
+
+// Who wrote an English text, for "More natural": the language its false friends point to, and
+// notes on the ones in the part to rewrite (src/falseFriends.ts).
+export type Writer = { language: string | null; falseFriends: string[] };
 
 export type Tone = keyof typeof tones;
 
@@ -62,15 +71,26 @@ export const rewritePrompt = ({
   settings,
   context = null,
   tone = "clearer",
+  writer = null,
 }: {
   text: string;
   settings: Settings;
   context?: RewriteContext | null;
   tone?: Tone;
+  writer?: Writer | null;
 }) => {
   const language = languageOf((context?.before ?? "") + text + (context?.after ?? ""));
   const what = context ? "the part of a sentence below" : "the text below";
-  return `Rewrite ${what} ${tones[tone].instruction}. Give 3 different versions.${
+  const natural = tone === "natural";
+  // "may", since some of these words are right in English too ("Actually, I disagree")
+  const hints = natural && writer?.language && writer.falseFriends.length
+    ? `\n\nThe writer may have used some of these words in their ${writer.language} sense. Change one only if the text shows that sense:\n${writer.falseFriends.map((n) => `- ${n}`).join("\n")}`
+    : "";
+  // "seems": the language comes from the false friends, and a native speaker writes "Actually" too
+  const who = natural && writer?.language
+    ? `The text below seems to be written in English by a native ${writer.language} speaker. `
+    : "";
+  return `${who}Rewrite ${what} ${tones[tone].instruction}. Give 3 different versions.${
     language
       ? ` The text is in ${language}: write every version in ${language}.`
       : " Write every version in the language of the text."
@@ -78,7 +98,7 @@ export const rewritePrompt = ({
     context
       ? " Each version replaces only this part, so it must fit between the words before and after it: don't repeat them, and don't start a new sentence."
       : ""
-  } Keep the meaning, and every name, number and link. Don't add placeholders, brackets or notes. Fix any mistakes along the way.${settingsRules(settings)}\n\n${
+  } Keep the meaning, and every name, number and link. Don't add placeholders, brackets or notes. Fix any mistakes along the way.${hints}${settingsRules(settings)}\n\n${
     context ? `Before: ${context.before}\nAfter: ${context.after}\n\nPart to rewrite:` : "Text:"
   }\n${text}`;
 };

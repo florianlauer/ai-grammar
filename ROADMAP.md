@@ -67,12 +67,20 @@ What shipping it taught:
 - The checks matter more with presets. "More formal" in French opened one variant with "Cher/Chère [Nom]", which the bracket rule drops.
 - Chrome's Rewriter API isn't used. It is still an origin trial, and the prompt path already covers the Chrome built-in model.
 
-## 5. Natural English
+## 5. Natural English (done)
 
 For people writing in English as a second language. It is the tone card with one more preset, "More natural", and a prompt that says the writer isn't a native speaker and should keep their meaning.
 
 - The prompt also asks for false friends, words that look like the writer's language but mean something else in English, such as "actually" for "actuellement". The browser's language tells the extension which language to watch for.
 - On demand only, like the other rewrites. A passive mode that flags unnatural sentences while typing would cost a model call per sentence per pause. It stays out until the model is fast enough.
+
+What shipping it taught:
+
+- Asking the model for the false friends didn't work. gemma4 missed "eventually" and "assisted to", listed "discuss about" as one, and suggested "actually" in place of "actually". The extension now has a hand-written list of 18 French ones (`src/falseFriends.ts`) and passes the ones it finds to the model as hints. With the hints, "I assisted to the conference" became "I attended the conference".
+- The same list gives notes on the card that don't depend on the model, and moves versions that still use a flagged word to the end.
+- Told to keep numbers, gemma4 still wrote "two weeks" for "2 weeks", in every tone, and the number check dropped all three variants. Asking for digits worked for this preset only, so the check now accepts numbers up to twelve spelled out instead.
+- The browser's language was the wrong clue: plenty of French speakers run their browser in English. The writer's language now comes from the text, since French false friends in the field point to a French speaker.
+- Only French has a list. English with no false friend gets the prompt without hints and without a writer's language.
 
 ## Not planned
 

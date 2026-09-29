@@ -20,6 +20,7 @@ This is a fork of [nucleartux/ai-grammar](https://github.com/nucleartux/ai-gramm
 - [Using it](#using-it)
   - [Rewrites](#rewrites)
   - [Tone](#tone)
+  - [Natural English](#natural-english)
 - [Troubleshooting](#troubleshooting)
 - [Settings](#settings)
 - [Benchmark](#benchmark)
@@ -303,6 +304,16 @@ Above the presets, the card says how formal the text sounds, on a scale of five 
 
 The presets also work on the whole field. Hover the badge, and the panel lists them under "Whole text". That text leaves out the email signature and the blank lines around it, like the check does.
 
+### Natural English
+
+For English written as a second language, the presets include "More natural". It shows up only when the text is in English. The extension looks for false friends in the text, English words used in their French sense: "actually" for "actuellement", "eventually" for "éventuellement", "assist to" for "assister à", "since 2 weeks" for "depuis 2 semaines". The list lives in `src/falseFriends.ts` and has 18 of them. The ones found in the text go into the prompt as words the writer may have used in the French sense, since some are right in English too ("Actually, I disagree"). The card lists them under "Words to check", so you can decide even when the model gets it wrong. Versions that still use one of them come last.
+
+The false friends are also how the extension guesses the writer's language. When the field has some, the prompt says the text seems to come from "a native French speaker". The browser's language would be a worse guess, since many French speakers run their browser in English. With no false friend in the field, the prompt says nothing about the writer.
+
+The list is written by hand because the model is bad at this. Asked to find the false friends itself, gemma4 missed "eventually" and "assisted to", and answered "actually" → "actually". Only French has a list for now.
+
+It runs only when you ask, like the other presets. Flagging unnatural sentences while you type would cost a model call per sentence on every pause.
+
 ## Troubleshooting
 
 <details>
@@ -413,16 +424,20 @@ node bench/rewrite-bench.mjs gemma4:e2b-it-qat qwen3.5:4b
 
 qwen3.5:4b used to lose two variants by writing "dix" for "10", until the number check accepted spelled-out numbers. The checks can't tell whether a rewrite kept the meaning: "it would be really good if we could maybe try to" became "we could try to", which passes. Read `bench/report-rewrite.md` for that.
 
-`bench/tone-bench.mjs` grades the tone features. It runs the formality meter on 12 French and English texts labelled from 1 to 5, then each preset on 4 texts. A variant that passes the extension's checks also has to do what its preset says: sound more formal to the meter, have fewer hedges like "maybe" or "je pense", or have fewer words. "Friendlier" has no measurable goal, so it only has to pass the checks.
+`bench/tone-bench.mjs` grades the tone features. It runs the formality meter on 12 French and English texts labelled from 1 to 5, then each preset on 4 texts. A variant that passes the extension's checks also has to do what its preset says: sound more formal to the meter, have fewer hedges like "maybe" or "je pense", have fewer words, or, for "More natural" on English written by French speakers, have fewer false friends. "Friendlier" has no measurable goal, so it only has to pass the checks. The meter runs on the model under test, so "More formal" is graded by the model that wrote the variant.
+
+"More natural" also runs on 4 correct English texts that the list flags anyway, like "Actually, I disagree" or "I passed the exam". There a variant fails if it brings in the French sense, such as "currently" or "took the exam".
 
 ```shell
 node bench/tone-bench.mjs gemma4:e2b-it-qat qwen3.5:4b
 ```
 
-| Model | Meter exact | Meter within one | Meter latency | More formal | Friendlier | More confident | Shorter |
-|---|---|---|---|---|---|---|---|
-| gemma4:e2b-it-qat | 10/12 | 12/12 | 0.30s | 11/11 | 12/12 | 12/12 | 11/11 |
-| qwen3.5:4b | 9/12 | 12/12 | 0.62s | 11/12 | 12/12 | 12/12 | 12/12 |
+| Model | Meter exact | Meter within one | Meter latency | More formal | Friendlier | More confident | Shorter | More natural | More natural, correct English |
+|---|---|---|---|---|---|---|---|---|---|
+| gemma4:e2b-it-qat | 10/12 | 12/12 | 0.30s | 11/11 | 12/12 | 12/12 | 11/11 | 12/12 | 11/11 |
+| qwen3.5:4b | 9/12 | 12/12 | 0.67s | 11/12 | 12/12 | 12/12 | 12/12 | 12/12 | 11/12 |
+
+"Fewer" isn't "none". All three of gemma4's versions of the first text still say "eventually", one of them "actually" too, and one version of another text turned "I assisted to the conference" into "I helped with the conference", the same misreading. That is why the card lists the words to check. On correct English, qwen3.5:4b once turned "I passed the exam" into "I took the exam".
 
 Results on an M2 Pro with Ollama 0.34.4:
 
@@ -448,6 +463,7 @@ npm run zip     # build, then zip build/ into package/ for a release
 - `src/contentScript/index.ts` finds text fields, calls the model, and draws the badge, the underlines and the popovers.
 - `src/contentScript/overlay.css` holds the overlay styles. They are scoped under `.aig-root` so the page's CSS can't reach them.
 - `src/prompts.ts` holds the prompts. The benchmarks import it, so they send exactly what the extension sends.
+- `src/falseFriends.ts` holds the false friends list for "More natural".
 - `src/contentScript/text.ts` holds the diff and filtering logic, the rewrite checks and the sentence counting, with no DOM access. `npm test` runs its tests with Node's test runner (Node 23.6 or newer, which runs TypeScript directly).
 - `src/options/` is the settings page, and `src/settings.ts` reads and writes the settings.
 - `src/background/index.ts` is the service worker that talks to Ollama and to Chrome's `LanguageModel` API.
