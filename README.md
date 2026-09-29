@@ -19,6 +19,7 @@ This is a fork of [nucleartux/ai-grammar](https://github.com/nucleartux/ai-gramm
 - [Set up a model](#set-up-a-model)
 - [Using it](#using-it)
   - [Rewrites](#rewrites)
+  - [Tone](#tone)
 - [Troubleshooting](#troubleshooting)
 - [Settings](#settings)
 - [Benchmark](#benchmark)
@@ -294,6 +295,14 @@ Before showing a variant, the extension checks it. It has to keep every number, 
 
 Rewrites run only when you ask. At 1.5 seconds each they are fine after a click and would be too slow on every typing pause.
 
+### Tone
+
+The rewrite card has a row of presets: "Clearer", the plain rewrite it starts with, then "More formal", "Friendlier", "More confident" and "Shorter". Click one to get three versions in that tone. The same checks apply, so a formal version that opens with "Cher/Chère [Nom]" is dropped for its brackets.
+
+Above the presets, the card says how formal the text sounds, on a scale of five from "Very casual" to "Very formal". It is one short model call, made when the card opens. Asked to name the tone in words, gemma4 answered "friendly, curt, curt" for a neutral message. On the 1 to 5 scale it matched 10 of 12 labelled texts, and was never off by more than one step.
+
+The presets also work on the whole field. Hover the badge, and the panel lists them under "Whole text". That text leaves out the email signature and the blank lines around it, like the check does.
+
 ## Troubleshooting
 
 <details>
@@ -403,6 +412,17 @@ node bench/rewrite-bench.mjs gemma4:e2b-it-qat qwen3.5:4b
 | qwen3.5:4b | 10/10 | 28/30 | 2.74s |
 
 qwen3.5:4b lost its two variants by writing "dix" for "10". The checks can't tell whether a rewrite kept the meaning: "it would be really good if we could maybe try to" became "we could try to", which passes. Read `bench/report-rewrite.md` for that.
+
+`bench/tone-bench.mjs` grades the tone features. It runs the formality meter on 12 French and English texts labelled from 1 to 5, then each preset on 4 texts. A variant that passes the extension's checks also has to do what its preset says: sound more formal to the meter, have fewer hedges like "maybe" or "je pense", or have fewer words. "Friendlier" has no measurable goal, so it only has to pass the checks.
+
+```shell
+node bench/tone-bench.mjs gemma4:e2b-it-qat qwen3.5:4b
+```
+
+| Model | Meter exact | Meter within one | Meter latency | More formal | Friendlier | More confident | Shorter |
+|---|---|---|---|---|---|---|---|
+| gemma4:e2b-it-qat | 10/12 | 12/12 | 0.30s | 11/11 | 12/12 | 12/12 | 11/11 |
+| qwen3.5:4b | 9/12 | 12/12 | 0.62s | 11/12 | 12/12 | 12/12 | 12/12 |
 
 Results on an M2 Pro with Ollama 0.34.4:
 

@@ -53,12 +53,19 @@ What shipping it taught:
 - Hovering a long sentence only offers a rewrite. Running the model on hover would start it every time the pointer crosses the text.
 - `bench/rewrite-bench.mjs`: gemma4 kept 30 of 30 variants on 10 texts with a 1.5 s median. qwen3.5:4b kept 28, losing two to "dix" for "10", and took 2.7 s.
 
-## 4. Change the tone
+## 4. Change the tone (done)
 
 The same selection card, with presets instead of free rewrites: "More formal", "Friendlier", "More confident", "Shorter". The presets also apply to the whole field from the panel.
 
 - On the Chrome built-in path, Chrome's Rewriter API covers "More formal", "More casual", "Shorter" and "Longer". It is still an origin trial (Chrome 137 to 148), so it only helps once it ships.
 - The tone meter, a label saying how the text sounds, waits for a benchmark. The measured result above is not good enough to show to anyone. If a single scale from casual to formal turns out reliable, that ships instead of a list of tones.
+
+What shipping it taught:
+
+- The single scale held up. `bench/tone-bench.mjs` has 12 French and English texts labelled from 1 (very casual) to 5 (very formal). gemma4 matched 10 and was one step off on the other two, in 0.3 s. The card shows that scale when it opens, one call per text, never while typing.
+- The presets are the rewrite prompt with another instruction. The bench checks that each one does what it says: every kept "More formal" variant rated more formal than its original, every "More confident" one had fewer hedges, every "Shorter" one fewer words.
+- The checks matter more with presets. "More formal" in French opened one variant with "Cher/Chère [Nom]", which the bracket rule drops.
+- Chrome's Rewriter API isn't used. It is still an origin trial, and the prompt path already covers the Chrome built-in model.
 
 ## 5. Natural English
 

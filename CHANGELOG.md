@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## Unreleased
+
+- feat: tone presets on the rewrite card: "More formal", "Friendlier", "More confident", "Shorter"
+- feat: the rewrite card says how formal the text sounds, from "Very casual" to "Very formal"
+- feat: the suggestions panel applies the tone presets to the whole field
+- feat: `bench/tone-bench.mjs` grades the formality meter and each preset
+
 ## 0.9.0 [2026.09.29]
 
 - feat: "Ignore" on a suggestion refuses that change on every site. The settings list ignored changes and can restore them

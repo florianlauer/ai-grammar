@@ -17,7 +17,17 @@ import {
   Settings,
   defaultSettings,
 } from "../settings";
-import { grammarPrompt, RewriteContext, rewritePrompt, rewriteSchema } from "../prompts";
+import {
+  formalityLevels,
+  formalityPrompt,
+  formalitySchema,
+  grammarPrompt,
+  RewriteContext,
+  rewritePrompt,
+  rewriteSchema,
+  Tone,
+  tones,
+} from "../prompts";
 import {
   changeOf,
   diffHunks,
@@ -42,6 +52,10 @@ const outputSchema = z.object({
 const outputSchemaJson = zodToJsonSchema(outputSchema);
 
 const rewriteOutput = z.object({ variants: z.array(z.string()) });
+
+const formalityOutput = z.object({ formality: z.number().int().min(1).max(5) });
+
+type RewriteRequest = { text: string; context: RewriteContext | null; tone: Tone };
 
 // Kept current by main(); read at event time so changes in the options page apply at once.
 let settings: Settings = defaultSettings;
@@ -236,11 +250,16 @@ const replaceText = (
   el.dispatchEvent(new Event("input", { bubbles: true }));
 };
 
+// Each channel has its own abort controller in the service worker.
+type Channel = "check" | "rewrite" | "meter";
+
 interface Provider {
   isSupported: () => Promise<boolean>;
   fixGrammar: (text: string, settings: Settings) => Promise<string>;
   // raw variants, before the checks in keepVariants
-  rewrite: (text: string, settings: Settings, context: RewriteContext | null) => Promise<string[]>;
+  rewrite: (request: RewriteRequest, settings: Settings) => Promise<string[]>;
+  // 1 (very casual) to 5 (very formal)
+  formality: (text: string, settings: Settings) => Promise<number>;
 }
 
 class GeminiProvider implements Provider {
@@ -257,7 +276,7 @@ class GeminiProvider implements Provider {
     }
   }
 
-  async #generate(channel: "check" | "rewrite", prompt: string, schema: Record<string, unknown>) {
+  async #generate(channel: Channel, prompt: string, schema: Record<string, unknown>) {
     const response: string | null = await chrome.runtime.sendMessage({
       type: "gemini.generate",
       channel,
@@ -278,9 +297,14 @@ class GeminiProvider implements Provider {
     return outputSchema.parse(json).correctedText;
   }
 
-  async rewrite(text: string, settings: Settings, context: RewriteContext | null) {
-    const json = await this.#generate("rewrite", rewritePrompt(text, settings, context), rewriteSchema);
+  async rewrite(request: RewriteRequest, settings: Settings) {
+    const json = await this.#generate("rewrite", rewritePrompt({ ...request, settings }), rewriteSchema);
     return rewriteOutput.parse(json).variants;
+  }
+
+  async formality(text: string) {
+    const json = await this.#generate("meter", formalityPrompt(text), formalitySchema);
+    return formalityOutput.parse(json).formality;
   }
 }
 
@@ -302,7 +326,7 @@ class OllamaProvider implements Provider {
     }
   }
 
-  async #generate(channel: "check" | "rewrite", model: string, prompt: string, format: object) {
+  async #generate(channel: Channel, model: string, prompt: string, format: object) {
     const response: GenerateResponse | { error: string } | null =
       await chrome.runtime.sendMessage({
       type: "ollama.generate",
@@ -333,14 +357,19 @@ class OllamaProvider implements Provider {
     return outputSchema.parse(json).correctedText;
   }
 
-  async rewrite(text: string, settings: Settings, context: RewriteContext | null) {
+  async rewrite(request: RewriteRequest, settings: Settings) {
     const json = await this.#generate(
       "rewrite",
       settings.model,
-      rewritePrompt(text, settings, context),
+      rewritePrompt({ ...request, settings }),
       rewriteSchema,
     );
     return rewriteOutput.parse(json).variants;
+  }
+
+  async formality(text: string, settings: Settings) {
+    const json = await this.#generate("meter", settings.model, formalityPrompt(text), formalitySchema);
+    return formalityOutput.parse(json).formality;
   }
 }
 
@@ -875,20 +904,26 @@ class SuggestionCard {
 type RewriteTarget = { start: number; end: number; text: string };
 
 // The popup with rewrite variants. Hovering a long sentence only offers a rewrite, so
-// passing the pointer over text never costs a model call; a click runs it.
+// passing the pointer over text never costs a model call; a click runs it. Once open, the
+// card says how formal the text sounds and switches between tone presets.
 class RewriteCard {
   #card: HTMLDivElement;
+  #body: HTMLDivElement | null = null;
+  #chips: HTMLButtonElement[] = [];
   #target: RewriteTarget | null = null;
   #anchor: (() => DOMRect) | null = null;
   // an offer follows the pointer like the suggestion card; a running or finished rewrite stays
   #pinned = false;
+  // bumped per request, and per target so a late formality answer can't land on another text
   #run = 0;
+  #session = 0;
   #hideTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(
     // variants that passed the checks
-    private rewrite: (target: RewriteTarget) => Promise<string[]>,
+    private rewrite: (target: RewriteTarget, tone: Tone) => Promise<string[]>,
     private onApply: (target: RewriteTarget, variant: string) => void,
+    private formality: (text: string) => Promise<number>,
   ) {
     this.#card = document.createElement("div");
     this.#card.className = "aig-root aig-pop aig-card aig-card--rewrite";
@@ -925,19 +960,53 @@ class RewriteCard {
     this.#show(target, anchor, [this.#label(`Long sentence, ${wordCount(target.text)} words`), button]);
   }
 
-  async open(target: RewriteTarget, anchor: () => DOMRect) {
+  async open(target: RewriteTarget, anchor: () => DOMRect, tone: Tone = "clearer") {
     clearTimeout(this.#hideTimer);
-    this.#pinned = true;
-    const run = ++this.#run;
-    this.#show(target, anchor, [this.#label("Rewriting…", true)]);
+    // a tone chip keeps the card, its meter and its chips, and only replaces the variants
+    let meter: HTMLDivElement | null = null;
+    if (!this.#pinned || this.#target !== target) {
+      this.#pinned = true;
+      ++this.#session;
+      meter = document.createElement("div");
+      meter.className = "aig-meter";
+      meter.hidden = true;
+      const chips = document.createElement("div");
+      chips.className = "aig-chips";
+      chips.role = "group";
+      chips.ariaLabel = "Tone";
+      this.#chips = (Object.keys(tones) as Tone[]).map((t) => {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "aig-chip";
+        chip.dataset.tone = t;
+        chip.textContent = tones[t].label;
+        chip.addEventListener("click", () => this.open(target, anchor, t));
+        return chip;
+      });
+      chips.append(...this.#chips);
+      this.#body = document.createElement("div");
+      this.#body.className = "aig-card__body";
+      this.#show(target, anchor, [meter, chips, this.#body]);
+    }
+    for (const chip of this.#chips) {
+      chip.ariaPressed = String(chip.dataset.tone === tone);
+    }
 
+    const run = ++this.#run;
+    this.#setBody([this.#label("Rewriting…", true)]);
+
+    const rewriting = this.rewrite(target, tone);
+    // sent after the rewrite, so an Ollama that runs one request at a time answers the rewrite first
+    if (meter) {
+      this.#measure(target.text, meter, this.#session);
+    }
     let variants: string[];
     try {
-      variants = await this.rewrite(target);
+      variants = await rewriting;
     } catch (e) {
       console.warn(e);
       if (run === this.#run) {
-        this.#show(target, anchor, [this.#note("The rewrite failed. Check that the model is running.")]);
+        this.#setBody([this.#note("The rewrite failed. Check that the model is running.")]);
       }
       return;
     }
@@ -945,13 +1014,13 @@ class RewriteCard {
       return;
     }
     if (variants.length === 0) {
-      this.#show(target, anchor, [
+      this.#setBody([
         this.#note("No rewrite kept every name, number and link, so none is shown. Try a shorter selection."),
       ]);
       return;
     }
-    this.#show(target, anchor, [
-      this.#label("Rewrites"),
+    this.#setBody([
+      this.#label(tone === "clearer" ? "Rewrites" : tones[tone].label),
       ...variants.map((variant) => {
         const button = document.createElement("button");
         button.type = "button";
@@ -964,6 +1033,39 @@ class RewriteCard {
         return button;
       }),
     ]);
+  }
+
+  // On its own channel, so it doesn't cancel the rewrite; on failure the line just stays hidden.
+  async #measure(text: string, meter: HTMLDivElement, session: number) {
+    let level: number;
+    try {
+      level = await this.formality(text);
+    } catch (e) {
+      console.warn(e);
+      return;
+    }
+    if (session !== this.#session) {
+      return;
+    }
+    const dots = document.createElement("span");
+    dots.className = "aig-meter__dots";
+    dots.ariaHidden = "true";
+    for (let i = 1; i <= 5; i++) {
+      const dot = document.createElement("span");
+      dot.toggleAttribute("data-on", i <= level);
+      dots.append(dot);
+    }
+    const name = document.createElement("strong");
+    name.textContent = formalityLevels[level - 1];
+    meter.replaceChildren("Sounds", dots, name);
+    meter.title = `Formality ${level} of 5, from very casual to very formal`;
+    meter.hidden = false;
+    this.reposition();
+  }
+
+  #setBody(children: HTMLElement[]) {
+    this.#body?.replaceChildren(...children);
+    this.reposition();
   }
 
   #label(text: string, busy = false) {
@@ -1021,6 +1123,7 @@ class RewriteCard {
     clearTimeout(this.#hideTimer);
     // a rewrite still running is dropped when it comes back
     this.#run++;
+    this.#session++;
     this.#pinned = false;
     this.#target = null;
     this.#anchor = null;
@@ -1091,7 +1194,11 @@ class Control {
       (hunk) => void ignoreChange(changeOf(this.#text, hunk)),
     );
     this.#long = new Underlines(textArea, "rewrite");
-    this.#rewriteCard = new RewriteCard(this.#rewrite, this.#applyRewrite);
+    this.#rewriteCard = new RewriteCard(this.#rewrite, this.#applyRewrite, (text) =>
+      this.#provider
+        ? this.#provider.formality(text.trim(), settings)
+        : Promise.reject(new Error("AI is not supported")),
+    );
     this.#rewriteButton = document.createElement("button");
     this.#rewriteButton.type = "button";
     this.#rewriteButton.className = "aig-root aig-rewrite-button";
@@ -1171,7 +1278,8 @@ class Control {
 
   #showTooltip() {
     clearTimeout(this.#hideTimer);
-    if (this.#isCorrect && !this.#longRanges.length) {
+    // a correct text still has the tone presets
+    if (this.#isCorrect && !this.#provider) {
       return;
     }
     this.#tooltip.show();
@@ -1303,7 +1411,7 @@ class Control {
     return wordCount(text) >= 2 ? { start, end, text } : null;
   }
 
-  #rewrite = async ({ start, end, text }: RewriteTarget) => {
+  #rewrite = async ({ start, end, text }: RewriteTarget, tone: Tone) => {
     if (!this.#provider) {
       throw new Error("AI is not supported");
     }
@@ -1311,7 +1419,10 @@ class Control {
     const lead = text.length - text.trimStart().length;
     const context = sentenceAround(this.#text, start + lead, start + lead + part.length);
     const fragment = isFragment(context);
-    const variants = await this.#provider.rewrite(part, settings, fragment ? context : null);
+    const variants = await this.#provider.rewrite(
+      { text: part, context: fragment ? context : null, tone },
+      settings,
+    );
     // also for a whole sentence selected without its stop, which the text still has after it
     return keepVariants(
       part,
@@ -1349,7 +1460,7 @@ class Control {
 
   // The panel lists fixes and rewrites under their own label once there are both kinds.
   #panelBody(fixes: DocumentFragment | null) {
-    if (!this.#longRanges.length) {
+    if (!this.#provider) {
       return fixes ?? "";
     }
     const label = (text: string, kind: string) => {
@@ -1365,7 +1476,9 @@ class Control {
       text.append(fixes);
       body.append(label("Fixes", "fix"), text);
     }
-    body.append(label("Rewrites", "rewrite"));
+    if (this.#longRanges.length) {
+      body.append(label("Rewrites", "rewrite"));
+    }
     this.#longRanges.forEach(({ start, end }, i) => {
       const text = this.#text.slice(start, end);
       const item = document.createElement("button");
@@ -1379,6 +1492,26 @@ class Control {
       });
       body.append(item);
     });
+
+    // the tone presets for the whole field, signature and blank lines left out like the check
+    const { before, core } = splitCheckable(this.#text);
+    const whole = { start: before.length, end: before.length + core.length, text: core };
+    const chips = document.createElement("div");
+    chips.className = "aig-chips";
+    chips.role = "group";
+    chips.ariaLabel = "Tone of the whole text";
+    for (const tone of Object.keys(tones) as Tone[]) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "aig-chip";
+      chip.textContent = tones[tone].label;
+      chip.addEventListener("click", () => {
+        this.#tooltip.hide();
+        this.#rewriteCard.open(whole, () => this.textArea.getBoundingClientRect(), tone);
+      });
+      chips.append(chip);
+    }
+    body.append(label("Whole text", "rewrite"), chips);
     return body;
   }
 
@@ -1399,6 +1532,8 @@ class Control {
         this.#hide();
         clearTimeout(this.#hideTimer);
         this.#tooltip.hide();
+        // the hidden panel's chips would still rewrite the previous text
+        this.#tooltip.content = { title: "", body: "" };
         return;
       case "loading":
         this.#show();
@@ -1408,12 +1543,7 @@ class Control {
       case "correct":
         this.#show();
         this.#setGlyph(checkIcon, "No suggestions");
-        if (this.#longRanges.length) {
-          this.#tooltip.content = { title: "No fixes", body: this.#panelBody(null) };
-        } else {
-          clearTimeout(this.#hideTimer);
-          this.#tooltip.hide();
-        }
+        this.#tooltip.content = { title: "No fixes", body: this.#panelBody(null) };
         return;
       case "wrong": {
         const title = `${state.count} ${state.count === 1 ? "suggestion" : "suggestions"}`;
