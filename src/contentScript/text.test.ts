@@ -71,3 +71,11 @@ test("an ignored insertion is tied to the word it follows", () => {
     "merci bonne journée, oui, bien",
   );
 });
+
+test("ignoring a deleted word doesn't store the word after it", () => {
+  const from = "the the cat sat";
+  const [hunk] = diffHunks(from, "the cat sat");
+  const change = changeOf(from, hunk);
+  assert.equal(change.from.trim(), "the");
+  assert.equal(keepUserText("the the dog", "the dog", [], [change]), "the the dog");
+});
