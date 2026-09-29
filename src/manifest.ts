@@ -15,6 +15,19 @@ export default defineManifest({
     48: "img/icon48.png",
     128: "img/icon128.png",
   },
+  permissions: ["storage"],
+  action: {
+    default_title: "AI Grammar settings",
+    default_icon: {
+      16: "img/icon16.png",
+      32: "img/icon32.png",
+      48: "img/icon48.png",
+    },
+  },
+  options_ui: {
+    page: "src/options/index.html",
+    open_in_tab: true,
+  },
   content_scripts: [
     {
       all_frames: true,

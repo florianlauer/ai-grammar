@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## Unreleased
+
+- feat: settings page, opened from the toolbar icon or the suggestions panel
+- feat: pick the Ollama model in the settings instead of editing the source
+- feat: personal dictionary: "Add to dictionary" on a suggestion, and a word list in the settings
+- feat: turn the extension off on a site, from the suggestions panel or the settings
+- fix: show Ollama's own error message (for example "model not found") instead of a generic one
+
 ## 0.7.1 [2026.09.29]
 
 - fix: recheck when an editor changes the text without an input event (deleting in Notion), so old suggestions don't linger
