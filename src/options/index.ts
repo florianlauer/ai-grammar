@@ -78,6 +78,7 @@ const bindAdd = ({
 
 let settings: Settings;
 let models: string[] | null = null;
+let switching = false;
 
 const renderModel = () => {
   const select = $<HTMLSelectElement>("model");
@@ -92,7 +93,7 @@ const renderModel = () => {
       return option;
     }),
   );
-  select.disabled = !models?.length;
+  select.disabled = switching || !models?.length;
   $("model-status").textContent =
     models === null
       ? "Ollama isn't reachable, so the extension uses the model built into Chrome. Start Ollama to pick a model here."
@@ -115,9 +116,32 @@ const render = () => {
   });
 };
 
-$<HTMLSelectElement>("model").addEventListener("change", (e) =>
-  saveSettings({ model: (e.target as HTMLSelectElement).value }),
-);
+$<HTMLSelectElement>("model").addEventListener("change", async (e) => {
+  const select = e.target as HTMLSelectElement;
+  const from = settings.model;
+  const to = select.value;
+  const load = $("model-load");
+  load.hidden = false;
+  load.dataset.state = "loading";
+  load.textContent = `Loading ${to}…`;
+  switching = true;
+  select.disabled = true;
+  await saveSettings({ model: to });
+
+  const response: { ok: true } | { error: string } | null = await chrome.runtime.sendMessage({
+    type: "ollama.switch",
+    data: { from: models?.includes(from) ? from : null, to },
+  });
+  switching = false;
+  select.disabled = false;
+  if (response && "ok" in response) {
+    load.dataset.state = "ready";
+    load.textContent = `${to} is loaded. Checks use it from now on.`;
+  } else {
+    load.dataset.state = "error";
+    load.textContent = `Couldn't load ${to}${response ? `: ${response.error}` : "."}`;
+  }
+});
 bindAdd({
   form: $("dictionary-form"),
   parse: (value) => value || null,
