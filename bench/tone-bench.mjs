@@ -3,6 +3,7 @@
 // Usage: node bench/tone-bench.mjs model1 model2 ...
 import { writeFileSync } from "node:fs";
 import { keepVariants, wordCount } from "../src/contentScript/text.ts";
+import { findFalseFriends } from "../src/falseFriends.ts";
 import { formalityPrompt, formalitySchema, rewritePrompt, rewriteSchema } from "../src/prompts.ts";
 import { defaultSettings } from "../src/settings.ts";
 
@@ -31,6 +32,23 @@ const texts = [
   "I think we should probably just go with the second option, it seems a bit cheaper maybe.",
 ];
 
+// English written by French speakers, for "More natural"
+const naturalTexts = [
+  "Actually I am working on this project since 2 weeks, I will send you the planning eventually.",
+  "Can you precise the deadline? I have an appointment with the client to discuss about the contract.",
+  "I assisted to the conference last week and it was very interesting, the speakers were very sympathic.",
+  "Thanks for all the informations, I will prevent you when the formation is ready.",
+];
+const falseFriends = (t) => findFalseFriends(t).notes.length;
+
+// Correct English that the list flags anyway: [text, the word a French sense would bring in]
+const correctTexts = [
+  ["Actually, I disagree with the proposal, the old design was faster.", /\bcurrently\b/i],
+  ["That is a sensible approach, let's go with it.", /\bsensitive\b/i],
+  ["I passed the exam last year, so I can start the job in June.", /\btook\b/i],
+  ["The fix worked eventually, after months of testing.", /\b(?:possibly|if needed)\b/i],
+];
+
 const hedges = /\b(I think|maybe|probably|just|perhaps|seems?|peut-être|je pense|juste|par hasard|il me semble)\b/gi;
 const hedgeCount = (t) => t.match(hedges)?.length ?? 0;
 
@@ -50,6 +68,14 @@ const goals = {
   friendly: { what: "passes the checks", test: async () => true },
   confident: { what: "fewer hedges", test: async (_, v, t) => hedgeCount(v) < hedgeCount(t) },
   shorter: { what: "fewer words", test: async (_, v, t) => wordCount(v) < wordCount(t) },
+  natural: { what: "fewer false friends", test: async (_, v, t) => falseFriends(v) < falseFriends(t) },
+  // same preset on correct English: the hints must not change the meaning
+  "natural, correct": {
+    tone: "natural",
+    texts: correctTexts.map(([text]) => text),
+    what: "keeps the English sense",
+    test: async (_, v, t) => !correctTexts.find(([text]) => text === t)[1].test(v),
+  },
 };
 
 const results = [];
@@ -70,19 +96,24 @@ for (const model of process.argv.slice(2)) {
   }
 
   const presets = {};
-  for (const [tone, goal] of Object.entries(goals)) {
+  for (const [name, goal] of Object.entries(goals)) {
+    const tone = goal.tone ?? name;
     let kept = 0;
     let reached = 0;
-    for (const text of texts) {
-      const { variants } = await generate(model, rewritePrompt({ text, settings: defaultSettings, tone }), rewriteSchema);
+    for (const text of goal.texts ?? (tone === "natural" ? naturalTexts : texts)) {
+      // what the extension sends: the writer's language comes from the text
+      const found = findFalseFriends(text);
+      const writer = tone === "natural" ? { language: found.language, falseFriends: found.notes } : null;
+      const prompt = rewritePrompt({ text, settings: defaultSettings, tone, writer });
+      const { variants } = await generate(model, prompt, rewriteSchema);
       for (const v of keepVariants(text, variants)) {
         kept++;
         const ok = await goal.test(model, v, text);
         if (ok) reached++;
-        detail.push([model, tone, v, goal.what, ok ? "✓" : "✗"]);
+        detail.push([model, name, v, goal.what, ok ? "✓" : "✗"]);
       }
     }
-    presets[tone] = { kept, reached };
+    presets[name] = { kept, reached };
   }
 
   meterTimes.sort((a, b) => a - b);

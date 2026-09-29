@@ -18,7 +18,7 @@
     "build": "tsc && vite build",
     "fmt": "prettier --write '**/*.{tsx,ts,json,css,scss,md}'",
     "zip": "npm run build && node src/zip.js",
-    "test": "node --test src/**/*.test.ts",
+    "test": "node --test 'src/**/*.test.ts'",
     "postinstall": "patch-package"
   },
   "dependencies": {

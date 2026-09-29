@@ -27,7 +27,9 @@ import {
   rewriteSchema,
   Tone,
   tones,
+  Writer,
 } from "../prompts";
+import { findFalseFriends } from "../falseFriends";
 import {
   changeOf,
   diffHunks,
@@ -38,6 +40,7 @@ import {
   fitFragment,
   isFragment,
   keepVariants,
+  languageOf,
   longSentences,
   sentenceAround,
   splitCheckable,
@@ -55,7 +58,19 @@ const rewriteOutput = z.object({ variants: z.array(z.string()) });
 
 const formalityOutput = z.object({ formality: z.number().int().min(1).max(5) });
 
-type RewriteRequest = { text: string; context: RewriteContext | null; tone: Tone };
+type RewriteRequest = {
+  text: string;
+  context: RewriteContext | null;
+  tone: Tone;
+  writer: Writer | null;
+};
+
+// Variants that passed the checks, and notes to show under them.
+type RewriteResult = { variants: string[]; notes: string[] };
+
+// "More natural" is for English written as a second language.
+const tonesFor = (text: string) =>
+  (Object.keys(tones) as Tone[]).filter((t) => t !== "natural" || languageOf(text) === "English");
 
 // Kept current by main(); read at event time so changes in the options page apply at once.
 let settings: Settings = defaultSettings;
@@ -920,8 +935,7 @@ class RewriteCard {
   #hideTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(
-    // variants that passed the checks
-    private rewrite: (target: RewriteTarget, tone: Tone) => Promise<string[]>,
+    private rewrite: (target: RewriteTarget, tone: Tone) => Promise<RewriteResult>,
     private onApply: (target: RewriteTarget, variant: string) => void,
     private formality: (text: string) => Promise<number>,
   ) {
@@ -974,7 +988,7 @@ class RewriteCard {
       chips.className = "aig-chips";
       chips.role = "group";
       chips.ariaLabel = "Tone";
-      this.#chips = (Object.keys(tones) as Tone[]).map((t) => {
+      this.#chips = tonesFor(target.text).map((t) => {
         const chip = document.createElement("button");
         chip.type = "button";
         chip.className = "aig-chip";
@@ -1000,9 +1014,9 @@ class RewriteCard {
     if (meter) {
       this.#measure(target.text, meter, this.#session);
     }
-    let variants: string[];
+    let result: RewriteResult;
     try {
-      variants = await rewriting;
+      result = await rewriting;
     } catch (e) {
       console.warn(e);
       if (run === this.#run) {
@@ -1013,9 +1027,15 @@ class RewriteCard {
     if (run !== this.#run) {
       return;
     }
+    const { variants, notes } = result;
+    // false friends are worth reading even when no variant made it
+    const noteList = notes.length
+      ? [this.#label("Words to check"), ...notes.map((n) => this.#note(n))]
+      : [];
     if (variants.length === 0) {
       this.#setBody([
         this.#note("No rewrite kept every name, number and link, so none is shown. Try a shorter selection."),
+        ...noteList,
       ]);
       return;
     }
@@ -1032,6 +1052,7 @@ class RewriteCard {
         });
         return button;
       }),
+      ...noteList,
     ]);
   }
 
@@ -1411,7 +1432,7 @@ class Control {
     return wordCount(text) >= 2 ? { start, end, text } : null;
   }
 
-  #rewrite = async ({ start, end, text }: RewriteTarget, tone: Tone) => {
+  #rewrite = async ({ start, end, text }: RewriteTarget, tone: Tone): Promise<RewriteResult> => {
     if (!this.#provider) {
       throw new Error("AI is not supported");
     }
@@ -1419,16 +1440,23 @@ class Control {
     const lead = text.length - text.trimStart().length;
     const context = sentenceAround(this.#text, start + lead, start + lead + part.length);
     const fragment = isFragment(context);
+    // the whole field gives the writer's language away, even when the selection has no false friend
+    const falseFriends = tone === "natural" ? findFalseFriends(part).notes : [];
+    const writer = tone === "natural" ? { language: findFalseFriends(this.#text).language, falseFriends } : null;
     const variants = await this.#provider.rewrite(
-      { text: part, context: fragment ? context : null, tone },
+      { text: part, context: fragment ? context : null, tone, writer },
       settings,
     );
     // also for a whole sentence selected without its stop, which the text still has after it
-    return keepVariants(
+    const kept = keepVariants(
       part,
       variants.map((v) => fitFragment(v, { part, ...context })),
       settings.dictionary,
     );
+    // versions that still use a flagged word go last
+    const flagged = (v: string) => findFalseFriends(v).notes.length;
+    const sorted = tone === "natural" ? kept.sort((a, b) => flagged(a) - flagged(b)) : kept;
+    return { variants: sorted, notes: falseFriends };
   };
 
   #applyRewrite = ({ start, end, text }: RewriteTarget, variant: string) => {
@@ -1500,7 +1528,7 @@ class Control {
     chips.className = "aig-chips";
     chips.role = "group";
     chips.ariaLabel = "Tone of the whole text";
-    for (const tone of Object.keys(tones) as Tone[]) {
+    for (const tone of tonesFor(core)) {
       const chip = document.createElement("button");
       chip.type = "button";
       chip.className = "aig-chip";
