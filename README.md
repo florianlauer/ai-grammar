@@ -291,7 +291,7 @@ Sentences longer than 30 words get a dashed violet underline. The extension find
 
 When you select only part of a sentence, the model gets the words before and after it and has to write a part that fits between them. It still repeats the word just before, capitalizes the start, or ends with a full stop now and then, so the extension trims those before showing the variant.
 
-Before showing a variant, the extension checks it. It has to keep every number, link, email address, dictionary word and capitalized name of the original, stay in the same language, and add no brackets or markdown. A variant that fails is dropped. If all of them fail, the card says so. Small models do fail these checks: qwen3.5:4b wrote "dix minutes" for "10 minutes", and gemma4 translated a French sentence to English until the prompt started naming the language.
+Before showing a variant, the extension checks it. It has to keep every number, link, email address, dictionary word and capitalized name of the original, stay in the same language, and add no brackets or markdown. A variant that fails is dropped. If all of them fail, the card says so. A number up to twelve can be spelled out, in English or French, since small models do that all the time: gemma4 writes "two weeks" for "2 weeks", and qwen3.5:4b "dix minutes" for "10 minutes". Small models do fail the other checks: gemma4 translated a French sentence to English until the prompt started naming the language.
 
 Rewrites run only when you ask. At 1.5 seconds each they are fine after a click and would be too slow on every typing pause.
 
@@ -408,10 +408,10 @@ node bench/rewrite-bench.mjs gemma4:e2b-it-qat qwen3.5:4b
 
 | Model | Cases with a variant shown | Variants kept | Median latency |
 |---|---|---|---|
-| gemma4:e2b-it-qat | 10/10 | 30/30 | 1.55s |
-| qwen3.5:4b | 10/10 | 28/30 | 2.74s |
+| gemma4:e2b-it-qat | 10/10 | 30/30 | 1.62s |
+| qwen3.5:4b | 10/10 | 30/30 | 2.69s |
 
-qwen3.5:4b lost its two variants by writing "dix" for "10". The checks can't tell whether a rewrite kept the meaning: "it would be really good if we could maybe try to" became "we could try to", which passes. Read `bench/report-rewrite.md` for that.
+qwen3.5:4b used to lose two variants by writing "dix" for "10", until the number check accepted spelled-out numbers. The checks can't tell whether a rewrite kept the meaning: "it would be really good if we could maybe try to" became "we could try to", which passes. Read `bench/report-rewrite.md` for that.
 
 `bench/tone-bench.mjs` grades the tone features. It runs the formality meter on 12 French and English texts labelled from 1 to 5, then each preset on 4 texts. A variant that passes the extension's checks also has to do what its preset says: sound more formal to the meter, have fewer hedges like "maybe" or "je pense", or have fewer words. "Friendlier" has no measurable goal, so it only has to pass the checks.
 

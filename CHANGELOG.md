@@ -6,6 +6,7 @@
 - feat: the rewrite card says how formal the text sounds, from "Very casual" to "Very formal"
 - feat: the suggestions panel applies the tone presets to the whole field
 - feat: `bench/tone-bench.mjs` grades the formality meter and each preset
+- fix: a rewrite that spells out a number up to twelve ("two weeks" for "2 weeks", "dix" for "10") is no longer dropped
 
 ## 0.9.0 [2026.09.29]
 

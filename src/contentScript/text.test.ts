@@ -90,10 +90,19 @@ test("a rewrite must keep numbers, links, names and dictionary words", () => {
   const original = "On a déployé la v2.3 sur https://app.sencrop.com hier et depuis Paul voit 10 minutes de retard sur Sencrop";
   const good = "Depuis le déploiement de la v2.3 sur https://app.sencrop.com hier, Paul voit 10 minutes de retard sur Sencrop.";
   assert.equal(rejectVariant(original, good, ["Sencrop"]), null);
-  assert.match(rejectVariant(original, good.replace("10", "dix"))!, /10/);
+  assert.match(rejectVariant(original, good.replace("10", "onze"))!, /10/);
   assert.match(rejectVariant(original, good.replace("https://app.sencrop.com", "le site"))!, /https/);
   assert.match(rejectVariant(original, good.replace("Paul", "il"))!, /Paul/);
   assert.match(rejectVariant(original, good.replace(" sur Sencrop", ""), ["Sencrop"])!, /Sencrop/);
+});
+
+test("a small number spelled out is kept", () => {
+  const original = "Actually I am working on this project since 2 weeks.";
+  assert.equal(rejectVariant(original, "I've been working on this project for two weeks."), null);
+  assert.equal(rejectVariant("Paul voit 10 minutes de retard", "Paul voit dix minutes de retard."), null);
+  // a whole word only: "sixty" isn't 6
+  assert.match(rejectVariant("It took 6 days", "It took sixty days.")!, /6/);
+  assert.match(rejectVariant("It took 42 days", "It took forty-two days.")!, /42/);
 });
 
 test("a rewrite can't add placeholders or switch language", () => {
