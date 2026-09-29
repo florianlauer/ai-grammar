@@ -1,6 +1,6 @@
 # CHANGELOG
 
-## Unreleased
+## 0.8.0 [2026.09.29]
 
 - feat: settings page, opened from the toolbar icon or the suggestions panel
 - feat: pick the Ollama model in the settings instead of editing the source. Switching unloads the old model and preloads the new one
