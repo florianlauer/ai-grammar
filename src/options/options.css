@@ -199,3 +199,17 @@ select.opt__field {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+
+.opt__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  max-width: 420px;
+  font-size: 14px;
+}
+
+.opt__row select.opt__field {
+  flex: none;
+  width: 180px;
+}

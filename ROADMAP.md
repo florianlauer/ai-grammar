@@ -28,11 +28,11 @@ Words the user wants left alone: product names, jargon, "PR", "review".
 - Two layers of protection. The prompt tells the model never to change these words. Then the extension drops any suggestion that touches one of them before showing it, because a small model doesn't follow instructions every time. The filter is what guarantees the behavior.
 - Matching is case sensitive by default ("Sencrop" is protected, "sencrop" is still a typo).
 
-## 2. Dismiss and remember
+## 2. Dismiss and remember (done)
 
-- The card gets "Ignore". The extension remembers the exact change the user refused ("review" → "révision") and never suggests it again, on any site.
+- The card gets "Ignore". The extension remembers the exact change the user refused ("review" → "révision") and never suggests it again, on any site. It stores the whole word around the change, so refusing one inserted comma doesn't refuse every comma.
 - Ignored changes show up in the options page, where the user can bring one back.
-- A few style preferences the model can't guess from one message: French "tu" or "vous", US or UK English, and whether informal words like "du coup" count as mistakes. They go into the prompt.
+- A few style preferences the model can't guess from one message: French "tu" or "vous", US or UK English, and whether informal words like "du coup" count as mistakes. They go into the prompt. gemma4 ignored a plain "replace informal words" rule and only followed it once the prompt gave examples ("du coup" → "donc").
 
 Unlimited suggestions come for free: there is no server, no account and no quota.
 

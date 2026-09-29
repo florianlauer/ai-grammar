@@ -1,6 +1,17 @@
 // User settings, in chrome.storage.sync so they follow the browser account without a server.
-// ponytail: sync storage caps an item at 8 KB, a few hundred dictionary words; move the
-// dictionary to storage.local if people outgrow that.
+// ponytail: sync storage caps an item at 8 KB, a few hundred dictionary words or ignored
+// changes; move those lists to storage.local if people outgrow that.
+
+// A change as whole words, e.g. "review" → "révision".
+export type Change = { from: string; to: string };
+
+// Preferences the model can't guess from one message. "any" leaves the choice to the text.
+export type Style = {
+  address: "any" | "tu" | "vous";
+  english: "any" | "us" | "uk";
+  // whether informal words like "du coup" count as mistakes
+  informal: "keep" | "fix";
+};
 
 export type Settings = {
   // Picked with bench/grammar-bench.mjs: best accuracy on French typos under 5 GB.
@@ -9,18 +20,24 @@ export type Settings = {
   dictionary: string[];
   // Hostnames where the extension stays off.
   disabledSites: string[];
+  // Changes the user refused; never suggested again, on any site.
+  ignored: Change[];
+  style: Style;
 };
 
 export const defaultSettings: Settings = {
   model: "gemma4:e2b-it-qat",
   dictionary: [],
   disabledSites: [],
+  ignored: [],
+  style: { address: "any", english: "any", informal: "keep" },
 };
 
-export const loadSettings = async (): Promise<Settings> => ({
-  ...defaultSettings,
-  ...((await chrome.storage.sync.get(defaultSettings)) as Partial<Settings>),
-});
+export const loadSettings = async (): Promise<Settings> => {
+  const stored = (await chrome.storage.sync.get(defaultSettings)) as Partial<Settings>;
+  // merged so a style option added later gets its default
+  return { ...defaultSettings, ...stored, style: { ...defaultSettings.style, ...stored.style } };
+};
 
 export const saveSettings = (changes: Partial<Settings>) =>
   chrome.storage.sync.set(changes);
@@ -46,5 +63,14 @@ export const disableSite = async (hostname: string) => {
   const { disabledSites } = await loadSettings();
   if (!disabledSites.includes(hostname)) {
     await saveSettings({ disabledSites: [...disabledSites, hostname].sort() });
+  }
+};
+
+export const sameChange = (a: Change, b: Change) => a.from === b.from && a.to === b.to;
+
+export const ignoreChange = async (change: Change) => {
+  const { ignored } = await loadSettings();
+  if (!ignored.some((c) => sameChange(c, change))) {
+    await saveSettings({ ignored: [...ignored, change] });
   }
 };

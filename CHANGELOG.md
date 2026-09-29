@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## Unreleased
+
+- feat: "Ignore" on a suggestion refuses that change on every site. The settings list ignored changes and can restore them
+- feat: style settings: French "tu" or "vous", US or UK spelling, and whether informal words count as mistakes
+
 ## 0.8.0 [2026.09.29]
 
 - feat: settings page, opened from the toolbar icon or the suggestions panel

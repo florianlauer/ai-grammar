@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  changeOf,
   diffHunks,
   dictionaryCandidate,
   keepUserText,
@@ -44,4 +45,29 @@ test("only a single word can be added to the dictionary", () => {
   assert.equal(dictionaryCandidate("c'est"), "c'est");
   assert.equal(dictionaryCandidate("tu peut"), null);
   assert.equal(dictionaryCandidate(" "), null);
+});
+
+test("an ignored change is kept out, everywhere it appears", () => {
+  const from = "la review est faite, merci pour la review.";
+  const to = "la révision est faite, merci pour la révision.";
+  const ignored = [{ from: "review", to: "révision" }];
+  assert.equal(keepUserText(from, to, [], ignored), from);
+});
+
+test("ignoring a change leaves the other fixes", () => {
+  const from = "tu peut faire la review";
+  const to = "tu peux faire la révision";
+  assert.equal(keepUserText(from, to, [], [{ from: "review", to: "révision" }]), "tu peux faire la review");
+});
+
+test("an ignored insertion is tied to the word it follows", () => {
+  const from = "merci bonne journée et merci encore";
+  const [hunk] = diffHunks(from, "merci, bonne journée et merci encore");
+  const change = changeOf(from, hunk);
+  assert.deepEqual(change, { from: "merci", to: "merci," });
+  // the same word elsewhere is ignored too, a comma after another word is not
+  assert.equal(
+    keepUserText("merci bonne journée, oui bien", "merci, bonne journée, oui, bien", [], [change]),
+    "merci bonne journée, oui, bien",
+  );
 });
