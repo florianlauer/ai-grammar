@@ -17,5 +17,7 @@
     "jsx": "react-jsx"
   },
   "include": ["src"],
+  // run by node --test, which needs the .ts extension in imports
+  "exclude": ["src/**/*.test.ts"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

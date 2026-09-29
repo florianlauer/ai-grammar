@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI Grammar settings</title>
+    <link rel="icon" href="/img/icon32.png" />
+  </head>
+  <body>
+    <main class="aig-root opt">
+      <header class="opt__head">
+        <img src="/img/icon48.png" alt="" width="32" height="32" />
+        <div>
+          <h1>AI Grammar</h1>
+          <p class="opt__meta" id="version"></p>
+        </div>
+      </header>
+
+      <section class="opt__section" aria-labelledby="model-title">
+        <h2 id="model-title">Model</h2>
+        <p class="opt__hint" id="model-status">Looking for Ollama…</p>
+        <select id="model" class="opt__field" aria-labelledby="model-title"></select>
+      </section>
+
+      <section class="opt__section" aria-labelledby="dictionary-title">
+        <h2 id="dictionary-title">Dictionary</h2>
+        <p class="opt__hint">
+          Words the extension never changes, such as names and jargon. Case counts: “Sencrop” is kept, “sencrop” is
+          still corrected.
+        </p>
+        <form class="opt__add" id="dictionary-form">
+          <input
+            class="opt__field"
+            name="value"
+            placeholder="Add a word"
+            aria-label="Word to add"
+            autocomplete="off"
+            spellcheck="false"
+            required
+          />
+          <button class="opt__button" type="submit">Add</button>
+        </form>
+        <ul class="opt__list" id="dictionary" data-empty="No words yet. Add one here or from a suggestion."></ul>
+      </section>
+
+      <section class="opt__section" aria-labelledby="sites-title">
+        <h2 id="sites-title">Turned off on</h2>
+        <p class="opt__hint">The extension doesn't check anything on these sites.</p>
+        <form class="opt__add" id="sites-form">
+          <input
+            class="opt__field"
+            name="value"
+            placeholder="example.com"
+            aria-label="Site to turn off"
+            autocomplete="off"
+            spellcheck="false"
+            required
+          />
+          <button class="opt__button" type="submit">Turn off</button>
+        </form>
+        <ul class="opt__list" id="sites" data-empty="On everywhere."></ul>
+      </section>
+    </main>
+    <script type="module" src="./index.ts"></script>
+  </body>
+</html>

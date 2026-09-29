@@ -1,5 +1,4 @@
 import { computePosition, flip, offset, Rect, shift } from "@floating-ui/dom";
-import { diffWords } from "diff";
 import type {
   GenerateResponse,
   GenerateRequest,
@@ -9,6 +8,22 @@ import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 // crxjs lists imported CSS in the manifest, so the browser injects it and page CSPs can't block it
 import "./overlay.css";
+import {
+  addToDictionary,
+  disableSite,
+  loadSettings,
+  onSettingsChange,
+  Settings,
+  defaultSettings,
+} from "../settings";
+import {
+  diffHunks,
+  diffSegments,
+  dictionaryCandidate,
+  Hunk,
+  keepUserText,
+  splitCheckable,
+} from "./text";
 
 const outputSchema = z.object({
   correctedText: z.string(),
@@ -16,11 +31,15 @@ const outputSchema = z.object({
 
 const outputSchemaJson = zodToJsonSchema(outputSchema);
 
-// Picked with bench/grammar-bench.mjs: best accuracy on French typos under 5 GB.
-const ollamaModel = "gemma4:e2b-it-qat";
+// Kept current by main(); read at event time so changes in the options page apply at once.
+let settings: Settings = defaultSettings;
 
-const grammarPrompt = (text: string) =>
-  `Fix the spelling, grammar and punctuation of the text below. Typos may be missing letters, apostrophes or accents: use the surrounding context to recover the intended word. Keep the original language, meaning, tone and technical terms; change as little as possible. If the text is already correct, return it unchanged.\n\nText:\n${text}`;
+const grammarPrompt = (text: string, dictionary: string[]) =>
+  `Fix the spelling, grammar and punctuation of the text below. Typos may be missing letters, apostrophes or accents: use the surrounding context to recover the intended word. Keep the original language, meaning, tone and technical terms; change as little as possible. If the text is already correct, return it unchanged.${
+    dictionary.length
+      ? `\n\nLeave these words exactly as written: ${dictionary.join(", ")}.`
+      : ""
+  }\n\nText:\n${text}`;
 
 const buttonSize = 24;
 const buttonPadding = 8;
@@ -61,84 +80,6 @@ const isVisible = (el: HTMLElement, parent: HTMLElement) => {
   }
 
   return true;
-};
-
-// A single change, as offsets into the original text.
-type Hunk = { start: number; end: number; replacement: string };
-
-type Segment = { text: string } | { hunk: Hunk; removed: string };
-
-// Groups adjacent removed/added words into hunks so each can be applied on its own.
-function diffSegments(from: string, to: string) {
-  const segments: Segment[] = [];
-  let pos = 0;
-  let current: { hunk: Hunk; removed: string } | null = null;
-
-  for (const part of diffWords(from, to)) {
-    if (!part.added && !part.removed) {
-      current = null;
-      segments.push({ text: part.value });
-      pos += part.value.length;
-      continue;
-    }
-
-    if (!current) {
-      current = { hunk: { start: pos, end: pos, replacement: "" }, removed: "" };
-      segments.push(current);
-    }
-
-    if (part.removed) {
-      current.removed += part.value;
-      pos += part.value.length;
-      current.hunk.end = pos;
-    } else {
-      current.hunk.replacement += part.value;
-    }
-  }
-
-  return segments;
-}
-
-const diffHunks = (from: string, to: string) =>
-  diffSegments(from, to).flatMap((s) => ("hunk" in s ? [s.hunk] : []));
-
-// Typographic variants of the same character. Editors like Notion turn ' into ’ as you
-// type, so suggesting one over the other would loop forever.
-const typography = (text: string) =>
-  text
-    .replace(/[‘’ʼ´`]/g, "'")
-    .replace(/[“”„«»]/g, '"')
-    .replace(/[  ]/g, " ")
-    .replace(/\s*"\s*/g, '"');
-
-// Keeps the user's version where the model only changed cosmetics: dropped blank lines,
-// which a rich text editor would show as full-width "fixes", or typographic variants.
-const keepCosmetics = (from: string, to: string) =>
-  diffSegments(from, to)
-    .map((s) => {
-      if ("text" in s) {
-        return s.text;
-      }
-      const changed = s.removed + s.hunk.replacement;
-      const onlyLineBreaks = !changed.trim() && changed.includes("\n");
-      return onlyLineBreaks || typography(s.removed) === typography(s.hunk.replacement)
-        ? s.removed
-        : s.hunk.replacement;
-    })
-    .join("");
-
-// What the model gets to see: no surrounding blank lines, and nothing from the
-// standard "-- " signature delimiter line on (Gmail and most mail clients use it).
-const splitCheckable = (text: string) => {
-  const signature = text.search(/^-- ?$/m);
-  const end = signature === -1 ? text.length : signature;
-  const start = text.length - text.trimStart().length;
-  const stop = Math.max(start, text.slice(0, end).trimEnd().length);
-  return {
-    before: text.slice(0, start),
-    core: text.slice(start, stop),
-    after: text.slice(stop),
-  };
 };
 
 // A clickable "removed → added" chunk, used in the tooltip and the suggestion card.
@@ -272,7 +213,7 @@ const replaceText = (
 
 interface Provider {
   isSupported: () => Promise<boolean>;
-  fixGrammar: (text: string) => Promise<string>;
+  fixGrammar: (text: string, settings: Settings) => Promise<string>;
 }
 
 class GeminiProvider implements Provider {
@@ -289,11 +230,11 @@ class GeminiProvider implements Provider {
     }
   }
 
-  async fixGrammar(text: string) {
+  async fixGrammar(text: string, { dictionary }: Settings) {
     const response: string | null = await chrome.runtime.sendMessage({
       type: "gemini.generate",
       data: {
-        text: grammarPrompt(text),
+        text: grammarPrompt(text, dictionary),
         responseConstraint: outputSchemaJson,
       } satisfies LanguageModelPromptOptions & { text: LanguageModelPrompt },
     });
@@ -326,12 +267,13 @@ class OllamaProvider implements Provider {
     }
   }
 
-  async fixGrammar(text: string) {
-    const response: GenerateResponse | null = await chrome.runtime.sendMessage({
+  async fixGrammar(text: string, { model, dictionary }: Settings) {
+    const response: GenerateResponse | { error: string } | null =
+      await chrome.runtime.sendMessage({
       type: "ollama.generate",
       data: {
-        model: ollamaModel,
-        prompt: grammarPrompt(text),
+        model,
+        prompt: grammarPrompt(text, dictionary),
         format: outputSchemaJson,
         options: { temperature: 0 },
         // keep the model loaded so the first check after a pause isn't slow
@@ -343,6 +285,9 @@ class OllamaProvider implements Provider {
 
     if (!response) {
       throw new Error("Make sure that Ollama is installed and running.");
+    }
+    if ("error" in response) {
+      throw new Error(response.error);
     }
 
     const json = outputSchema.parse(JSON.parse(response.response));
@@ -446,7 +391,23 @@ class Tooltip {
     this.#body = document.createElement("div");
     this.#body.className = "aig-panel__body";
 
-    this.#tooltip.append(head, this.#body);
+    const foot = document.createElement("div");
+    foot.className = "aig-panel__foot";
+    const settingsLink = document.createElement("button");
+    settingsLink.type = "button";
+    settingsLink.className = "aig-link";
+    settingsLink.textContent = "Settings";
+    settingsLink.addEventListener("click", () =>
+      chrome.runtime.sendMessage({ type: "options.open" }),
+    );
+    const siteOff = document.createElement("button");
+    siteOff.type = "button";
+    siteOff.className = "aig-link";
+    siteOff.textContent = `Turn off on ${location.hostname}`;
+    siteOff.addEventListener("click", () => void disableSite(location.hostname));
+    foot.append(settingsLink, siteOff);
+
+    this.#tooltip.append(head, this.#body, foot);
     document.body.appendChild(this.#tooltip);
   }
 
@@ -729,6 +690,7 @@ class SuggestionCard {
   constructor(
     private onApply: (hunk: Hunk) => void,
     private onActiveChange: (hunk: Hunk | null) => void,
+    private onAddWord: (word: string) => void,
   ) {
     this.#card = document.createElement("div");
     this.#card.className = "aig-root aig-pop aig-card";
@@ -774,6 +736,19 @@ class SuggestionCard {
       apply.textContent = `Add ${quoted(hunk.replacement)}`;
     }
     children.push(apply);
+
+    const word = dictionaryCandidate(removed);
+    if (word) {
+      const add = document.createElement("button");
+      add.type = "button";
+      add.className = "aig-card__secondary";
+      add.textContent = `Add ${quoted(word)} to dictionary`;
+      add.addEventListener("click", () => {
+        this.hide();
+        this.onAddWord(word);
+      });
+      children.push(add);
+    }
     this.#card.replaceChildren(...children);
     this.#card.dataset.open = "";
 
@@ -862,6 +837,7 @@ class Control {
     this.#card = new SuggestionCard(
       (hunk) => this.#applyHunks([hunk]),
       (hunk) => this.#underlines.setActive(hunk),
+      (word) => void addToDictionary(word),
     );
     document.addEventListener("mousemove", this.#handleMouseMove, { passive: true });
     // capture: scrolls inside any container move the text too
@@ -1060,7 +1036,7 @@ class Control {
       return;
     }
 
-    const result = await resultFromPromise(this.#provider.fixGrammar(core));
+    const result = await resultFromPromise(this.#provider.fixGrammar(core, settings));
 
     if (run !== this.#run || this.#text !== text) {
       return;
@@ -1087,7 +1063,7 @@ class Control {
       return;
     }
 
-    this.#result = before + keepCosmetics(core, result.value.trim()) + after;
+    this.#result = before + keepUserText(core, result.value.trim(), settings.dictionary) + after;
     this.#showResult();
   }
 
@@ -1105,6 +1081,14 @@ class Control {
       });
       this.#card.hide();
       this.#underlines.set(this.#text, hunks);
+    }
+  }
+
+  // Drops suggestions on words just added to the dictionary, without a new model call.
+  public refresh() {
+    if (this.#button.dataset.state === "wrong") {
+      this.#result = keepUserText(this.#text, this.#result, settings.dictionary);
+      this.#showResult();
     }
   }
 
@@ -1214,8 +1198,13 @@ const logSkipped = (target: EventTarget, event: string) => {
   }
 };
 
+const siteDisabled = () => settings.disabledSites.includes(location.hostname);
+
 const inputListener = (provider: Provider | null) => async (e: Event) => {
   const target = e.target;
+  if (siteDisabled()) {
+    return;
+  }
 
   if (!target || !isTextArea(target)) {
     if (target) logSkipped(target, "input");
@@ -1241,6 +1230,9 @@ const inputListener = (provider: Provider | null) => async (e: Event) => {
 
 const focusListener = (provider: Provider | null) => async (e: Event) => {
   const target = e.target;
+  if (siteDisabled()) {
+    return;
+  }
 
   if (!target || !isTextArea(target)) {
     if (target) logSkipped(target, "focus");
@@ -1285,6 +1277,18 @@ const updateTargets = (provider: Provider | null) => {
 };
 
 const main = async () => {
+  settings = await loadSettings();
+  onSettingsChange((next) => {
+    const dictionaryChanged = next.dictionary.join("\n") !== settings.dictionary.join("\n");
+    settings = next;
+    if (siteDisabled()) {
+      control?.destroy();
+      control = null;
+    } else if (dictionaryChanged) {
+      control?.refresh();
+    }
+  });
+
   const providers = [new OllamaProvider(), new GeminiProvider()];
 
   let provider: Provider | null = null;

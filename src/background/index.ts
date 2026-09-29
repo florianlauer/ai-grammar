@@ -32,7 +32,15 @@ const ollamaGenerate = (
   });
 };
 
+chrome.action.onClicked.addListener(() => chrome.runtime.openOptionsPage());
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  // content scripts can't open the options page themselves
+  if (request.type === "options.open") {
+    chrome.runtime.openOptionsPage();
+    return;
+  }
+
   if (request.type === "ollama.list") {
     ollama
       .list()
@@ -46,7 +54,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     abortController = new AbortController();
     ollamaGenerate(request.data)
       .then((result) => sendResponse(result))
-      .catch(() => sendResponse(null));
+      // e.g. "model not found" after picking a model that isn't pulled
+      .catch((e) => sendResponse({ error: String(e?.message ?? e) }));
 
     return true;
   }

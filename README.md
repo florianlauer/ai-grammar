@@ -19,7 +19,7 @@ This is a fork of [nucleartux/ai-grammar](https://github.com/nucleartux/ai-gramm
 - [Set up a model](#set-up-a-model)
 - [Using it](#using-it)
 - [Troubleshooting](#troubleshooting)
-- [Changing the model](#changing-the-model)
+- [Settings](#settings)
 - [Benchmark](#benchmark)
 - [Developing](#developing)
 - [Privacy](#privacy)
@@ -43,6 +43,7 @@ You type in a text field. When you stop for half a second, the extension sends t
 - Ollama uses `gemma4:e2b-it-qat` by default. It fixed every case in the [benchmark](#benchmark), in about half a second.
 - The extension asks Ollama to keep the model loaded, so checks don't pay a loading delay after a pause.
 - The overlays pick a light or dark look from the text color of the field, and respect `prefers-reduced-motion`.
+- A settings page picks the Ollama model, holds a personal dictionary of words to leave alone, and turns the extension off on chosen sites.
 - The Ollama request passes a real JSON schema. Upstream passed a zod object, which recent Ollama servers reject with a 500.
 
 ## Requirements
@@ -262,7 +263,11 @@ Click into a text field and type. The badge in the bottom right corner of the fi
 - A red number when it has suggestions. The same words are underlined in the field.
 - An orange icon when the check failed. Hover it to read the error.
 
-Hover an underlined word to see its fix, and click the fix to apply it. Hover the badge to see all the changes in context. Click any change in that panel to apply only that one, or click "Accept all". Cmd+Z / Ctrl+Z undoes an applied fix.
+Hover an underlined word to see its fix, and click the fix to apply it. If the word is right as written, a name or a term of your trade, click "Add to dictionary" under the fix: the suggestion goes away, and the extension never changes that word again.
+
+<img src="./assets/dictionary.png" alt="Suggestion card with the fix and an Add to dictionary action below it" width="560">
+
+Hover the badge to see all the changes in context. Click any change in that panel to apply only that one, or click "Accept all". Cmd+Z / Ctrl+Z undoes an applied fix. The bottom of the panel links to the settings and turns the extension off on the current site.
 
 The extension checks `<textarea>` elements and rich text editors built on `contenteditable`. It skips single-line `<input>` fields, and fields where the page turned spell checking off (`spellcheck="false"`). Gmail is the exception: it turns spell checking off because it has its own checker, so the extension checks its compose window anyway.
 
@@ -298,7 +303,7 @@ Ollama doesn't allow the extension's origin. Go back to [step 3](#option-a-ollam
 <details>
 <summary>Orange badge, "model not found"</summary>
 
-The model isn't downloaded, or has another name. Run `ollama pull gemma4:e2b-it-qat`, or set `ollamaModel` to a model you have (see [Changing the model](#changing-the-model)).
+The model isn't downloaded, or has another name. Run `ollama pull gemma4:e2b-it-qat`, or pick a model you have in the [settings](#settings).
 
 </details>
 
@@ -344,15 +349,17 @@ Open the browser console on that site and run `localStorage.setItem("ai-grammar:
 
 </details>
 
-## Changing the model
+## Settings
 
-The Ollama model name is a constant at the top of `src/contentScript/index.ts`:
+Click the extension's toolbar icon, or "Settings" at the bottom of the suggestions panel. The page has three sections:
 
-```ts
-const ollamaModel = "gemma4:e2b-it-qat";
-```
+- **Model.** The Ollama model used for every check, picked from the models Ollama has. The change applies to the next check, with no reload. Run the [benchmark](#benchmark) before switching: some models rewrite whole sentences, translate jargon, or add markdown around their answer. With Chrome's built-in model there is nothing to pick.
+- **Dictionary.** Words the extension never changes. Case counts: with "Sencrop" in the dictionary, "Sencrop" is kept and "sencrop" is still corrected. The prompt asks the model to leave these words alone, and the extension also drops any suggestion that touches one, because a small model doesn't follow every instruction.
+- **Turned off on.** Sites where the extension checks nothing. It accepts a hostname or a pasted URL.
 
-Change it, run `npm run build`, and reload the extension. Pull the model with `ollama pull <name>` first. Run the benchmark before switching: some models rewrite whole sentences, translate jargon, or add markdown around their answer.
+<img src="./assets/settings.png" alt="Settings page with the model picker, the dictionary and the list of sites where the extension is off" width="560">
+
+Settings are stored with `chrome.storage.sync`, so they follow your browser profile to other machines when browser sync is on.
 
 ## Benchmark
 
@@ -381,12 +388,15 @@ Results on an M2 Pro with Ollama 0.34.4:
 ```shell
 npm install
 npm run build   # type check and build into build/
+npm test        # unit tests for the text logic
 npm run fmt     # format with prettier
 npm run zip     # build, then zip build/ into package/ for a release
 ```
 
 - `src/contentScript/index.ts` finds text fields, calls the model, and draws the badge, the underlines and the popovers.
 - `src/contentScript/overlay.css` holds the overlay styles. They are scoped under `.aig-root` so the page's CSS can't reach them.
+- `src/contentScript/text.ts` holds the diff and filtering logic, with no DOM access. `npm test` runs its tests with Node's test runner (Node 23.6 or newer, which runs TypeScript directly).
+- `src/options/` is the settings page, and `src/settings.ts` reads and writes the settings.
 - `src/background/index.ts` is the service worker that talks to Ollama and to Chrome's `LanguageModel` API.
 - `src/manifest.ts` generates `manifest.json` through [CRXJS](https://crxjs.dev).
 
@@ -401,7 +411,7 @@ gh release create v<version> package/AI-Grammar-Checker-<version>.zip --notes-fi
 
 ## Privacy
 
-The extension sends the text of the field you're typing in to `http://127.0.0.1:11434` (your Ollama server) or to Chrome's on-device model. Nothing else, nowhere else. It collects no data and has no analytics. See [PRIVACY.md](./PRIVACY.md).
+The extension sends the text of the field you're typing in to `http://127.0.0.1:11434` (your Ollama server) or to Chrome's on-device model. Nothing else, nowhere else. It collects no data and has no analytics. The settings, dictionary included, live in the browser's extension storage, which the browser syncs to your account like bookmarks when sync is on. See [PRIVACY.md](./PRIVACY.md).
 
 ## Credits and license
 
