@@ -1,5 +1,6 @@
 // Text logic with no DOM access, so it runs under `node --test`.
 import { diffWords } from "diff";
+import type { Change } from "../settings";
 
 // A single change, as offsets into the original text.
 export type Hunk = { start: number; end: number; replacement: string };
@@ -68,11 +69,35 @@ const touches = (hunk: Hunk, ranges: { start: number; end: number }[]) =>
       : hunk.start < r.end && r.start < hunk.end,
   );
 
+// A hunk widened to the whole word around it, so ignoring "add a comma after merci"
+// doesn't ignore every comma.
+export const changeOf = (text: string, { start, end, replacement }: Hunk): Change => {
+  let s = start;
+  let e = end;
+  // letters and digits only, so "review." and "review," are the same change as "review"
+  const inWord = (c: string | undefined) => !!c && /[\p{L}\p{N}]/u.test(c);
+  while (inWord(text[s - 1])) s--;
+  while (inWord(text[e])) e++;
+  return {
+    from: text.slice(s, e),
+    to: text.slice(s, start) + replacement + text.slice(end, e),
+  };
+};
+
 // Keeps the user's version where the model changed something it shouldn't have:
 // dropped blank lines, which a rich text editor would show as full-width "fixes",
-// typographic variants, and words from the user's dictionary.
-export const keepUserText = (from: string, to: string, dictionary: string[] = []) => {
+// typographic variants, words from the user's dictionary, and changes they ignored.
+export const keepUserText = (
+  from: string,
+  to: string,
+  dictionary: string[] = [],
+  ignored: Change[] = [],
+) => {
   const ranges = protectedRanges(from, dictionary);
+  const isIgnored = (hunk: Hunk) => {
+    const change = changeOf(from, hunk);
+    return ignored.some((c) => c.from === change.from && c.to === change.to);
+  };
   return diffSegments(from, to)
     .map((s) => {
       if ("text" in s) {
@@ -82,7 +107,8 @@ export const keepUserText = (from: string, to: string, dictionary: string[] = []
       const onlyLineBreaks = !changed.trim() && changed.includes("\n");
       return onlyLineBreaks ||
         typography(s.removed) === typography(s.hunk.replacement) ||
-        touches(s.hunk, ranges)
+        touches(s.hunk, ranges) ||
+        isIgnored(s.hunk)
         ? s.removed
         : s.hunk.replacement;
     })

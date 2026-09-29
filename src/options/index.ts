@@ -6,8 +6,10 @@ import {
   disableSite,
   loadSettings,
   onSettingsChange,
+  sameChange,
   saveSettings,
   Settings,
+  Style,
 } from "../settings";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -26,25 +28,29 @@ const hostnameOf = (value: string) => {
   }
 };
 
-const renderList = ({
+const renderList = <T,>({
   list,
   items,
   onRemove,
+  text = String,
+  action = "Remove",
 }: {
   list: HTMLUListElement;
-  items: string[];
-  onRemove: (item: string) => void;
+  items: T[];
+  onRemove: (item: T) => void;
+  text?: (item: T) => string;
+  action?: string;
 }) => {
   list.replaceChildren(
     ...items.map((item) => {
       const li = document.createElement("li");
       const label = document.createElement("span");
-      label.textContent = item;
+      label.textContent = text(item);
       const remove = document.createElement("button");
       remove.type = "button";
       remove.className = "aig-link";
-      remove.textContent = "Remove";
-      remove.ariaLabel = `Remove ${item}`;
+      remove.textContent = action;
+      remove.ariaLabel = `${action} ${text(item)}`;
       remove.addEventListener("click", () => onRemove(item));
       li.append(label, remove);
       return li;
@@ -110,11 +116,28 @@ const render = () => {
     onRemove: (word) => saveSettings({ dictionary: settings.dictionary.filter((w) => w !== word) }),
   });
   renderList({
+    list: $("ignored"),
+    items: settings.ignored,
+    text: ({ from, to }) => `${from || "(nothing)"} → ${to || "(nothing)"}`,
+    action: "Restore",
+    onRemove: (change) => saveSettings({ ignored: settings.ignored.filter((c) => !sameChange(c, change)) }),
+  });
+  for (const select of styleSelects) {
+    select.value = settings.style[select.name as keyof Style];
+  }
+  renderList({
     list: $("sites"),
     items: settings.disabledSites,
     onRemove: (site) => saveSettings({ disabledSites: settings.disabledSites.filter((s) => s !== site) }),
   });
 };
+
+const styleSelects = document.querySelectorAll<HTMLSelectElement>("#style select");
+for (const select of styleSelects) {
+  select.addEventListener("change", () =>
+    saveSettings({ style: { ...settings.style, [select.name]: select.value } }),
+  );
+}
 
 $<HTMLSelectElement>("model").addEventListener("change", async (e) => {
   const select = e.target as HTMLSelectElement;

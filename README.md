@@ -44,6 +44,7 @@ You type in a text field. When you stop for half a second, the extension sends t
 - The extension asks Ollama to keep the model loaded, so checks don't pay a loading delay after a pause.
 - The overlays pick a light or dark look from the text color of the field, and respect `prefers-reduced-motion`.
 - A settings page picks the Ollama model, holds a personal dictionary of words to leave alone, and turns the extension off on chosen sites.
+- "Ignore" on a suggestion refuses that change for good, on every site. The settings list the ignored changes and set a few style preferences: "tu" or "vous", US or UK spelling, and whether informal words count as mistakes.
 - The Ollama request passes a real JSON schema. Upstream passed a zod object, which recent Ollama servers reject with a 500.
 
 ## Requirements
@@ -267,6 +268,8 @@ Hover an underlined word to see its fix, and click the fix to apply it. If the w
 
 <img src="./assets/dictionary.png" alt="Suggestion card with the fix and an Add to dictionary action below it" width="560">
 
+If you just disagree with the fix, click "Ignore". The extension remembers that exact change, for example "review" → "révision", and doesn't suggest it again on any site. It remembers the whole word around the change, so ignoring a comma after "merci" doesn't hide the commas it suggests elsewhere.
+
 Hover the badge to see all the changes in context. Click any change in that panel to apply only that one, or click "Accept all". Cmd+Z / Ctrl+Z undoes an applied fix. The bottom of the panel links to the settings and turns the extension off on the current site.
 
 The extension checks `<textarea>` elements and rich text editors built on `contenteditable`. It skips single-line `<input>` fields, and fields where the page turned spell checking off (`spellcheck="false"`). Gmail is the exception: it turns spell checking off because it has its own checker, so the extension checks its compose window anyway.
@@ -351,10 +354,12 @@ Open the browser console on that site and run `localStorage.setItem("ai-grammar:
 
 ## Settings
 
-Click the extension's toolbar icon, or "Settings" at the bottom of the suggestions panel. The page has three sections:
+Click the extension's toolbar icon, or "Settings" at the bottom of the suggestions panel. The page has five sections:
 
 - **Model.** The Ollama model used for every check, picked from the models Ollama has. Picking one unloads the previous model from Ollama to free its memory, then loads the new one while the page shows a loader, so the next check doesn't wait for it. No reload needed. Run the [benchmark](#benchmark) before switching: some models rewrite whole sentences, translate jargon, or add markdown around their answer. With Chrome's built-in model there is nothing to pick.
 - **Dictionary.** Words the extension never changes. Case counts: with "Sencrop" in the dictionary, "Sencrop" is kept and "sencrop" is still corrected. The prompt asks the model to leave these words alone, and the extension also drops any suggestion that touches one, because a small model doesn't follow every instruction.
+- **Style.** Three choices the model can't guess from one message. In French, address the reader as "tu" or "vous". In English, use US or UK spelling. Informal words like "du coup", "ouais" or "gonna" are kept by default, or counted as mistakes. Each choice adds one line to the prompt; with the defaults the prompt is the one the benchmark measured.
+- **Ignored changes.** Every change you refused with "Ignore". "Restore" makes the extension suggest it again.
 - **Turned off on.** Sites where the extension checks nothing. It accepts a hostname or a pasted URL.
 
 <img src="./assets/settings.png" alt="Settings page with the model picker, the dictionary and the list of sites where the extension is off" width="560">

@@ -44,6 +44,40 @@
         <ul class="opt__list" id="dictionary" data-empty="No words yet. Add one here or from a suggestion."></ul>
       </section>
 
+      <section class="opt__section" id="style" aria-labelledby="style-title">
+        <h2 id="style-title">Style</h2>
+        <p class="opt__hint">Choices the model can't guess from one message.</p>
+        <label class="opt__row">
+          <span>French: address the reader as</span>
+          <select class="opt__field" name="address">
+            <option value="any">Leave as written</option>
+            <option value="tu">tu</option>
+            <option value="vous">vous</option>
+          </select>
+        </label>
+        <label class="opt__row">
+          <span>English spelling</span>
+          <select class="opt__field" name="english">
+            <option value="any">Leave as written</option>
+            <option value="us">US (color)</option>
+            <option value="uk">UK (colour)</option>
+          </select>
+        </label>
+        <label class="opt__row">
+          <span>Informal words like “du coup”</span>
+          <select class="opt__field" name="informal">
+            <option value="keep">Keep them</option>
+            <option value="fix">Count as mistakes</option>
+          </select>
+        </label>
+      </section>
+
+      <section class="opt__section" aria-labelledby="ignored-title">
+        <h2 id="ignored-title">Ignored changes</h2>
+        <p class="opt__hint">Changes you refused with “Ignore” on a suggestion. They aren't suggested again, on any site.</p>
+        <ul class="opt__list" id="ignored" data-empty="Nothing ignored yet."></ul>
+      </section>
+
       <section class="opt__section" aria-labelledby="sites-title">
         <h2 id="sites-title">Turned off on</h2>
         <p class="opt__hint">The extension doesn't check anything on these sites.</p>

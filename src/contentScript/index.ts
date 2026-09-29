@@ -12,11 +12,14 @@ import {
   addToDictionary,
   disableSite,
   loadSettings,
+  ignoreChange,
   onSettingsChange,
   Settings,
+  Style,
   defaultSettings,
 } from "../settings";
 import {
+  changeOf,
   diffHunks,
   diffSegments,
   dictionaryCandidate,
@@ -34,12 +37,27 @@ const outputSchemaJson = zodToJsonSchema(outputSchema);
 // Kept current by main(); read at event time so changes in the options page apply at once.
 let settings: Settings = defaultSettings;
 
-const grammarPrompt = (text: string, dictionary: string[]) =>
-  `Fix the spelling, grammar and punctuation of the text below. Typos may be missing letters, apostrophes or accents: use the surrounding context to recover the intended word. Keep the original language, meaning, tone and technical terms; change as little as possible. If the text is already correct, return it unchanged.${
-    dictionary.length
-      ? `\n\nLeave these words exactly as written: ${dictionary.join(", ")}.`
-      : ""
+// Only non-default choices add a line, so the default prompt stays the one the benchmark measured.
+const styleRules = ({ address, english, informal }: Style) =>
+  [
+    address !== "any" &&
+      `In French, address the reader as "${address}" and adjust the verbs and pronouns to match.`,
+    english === "us" && "In English, use American spelling (color, organize).",
+    english === "uk" && "In English, use British spelling (colour, organise).",
+    // a softer "replace informal words" was ignored by gemma4; the examples make it stick
+    informal === "fix" &&
+      `Informal and spoken words are mistakes here: replace them with their standard written form, for example "du coup" → "donc", "gonna" → "going to", "ouais" → "oui".`,
+  ].filter(Boolean);
+
+const grammarPrompt = (text: string, { dictionary, style }: Settings) => {
+  const rules = [
+    ...styleRules(style),
+    dictionary.length && `Leave these words exactly as written: ${dictionary.join(", ")}.`,
+  ].filter(Boolean);
+  return `Fix the spelling, grammar and punctuation of the text below. Typos may be missing letters, apostrophes or accents: use the surrounding context to recover the intended word. Keep the original language, meaning, tone and technical terms; change as little as possible. If the text is already correct, return it unchanged.${
+    rules.length ? `\n\n${rules.join("\n")}` : ""
   }\n\nText:\n${text}`;
+};
 
 const buttonSize = 24;
 const buttonPadding = 8;
@@ -230,11 +248,11 @@ class GeminiProvider implements Provider {
     }
   }
 
-  async fixGrammar(text: string, { dictionary }: Settings) {
+  async fixGrammar(text: string, settings: Settings) {
     const response: string | null = await chrome.runtime.sendMessage({
       type: "gemini.generate",
       data: {
-        text: grammarPrompt(text, dictionary),
+        text: grammarPrompt(text, settings),
         responseConstraint: outputSchemaJson,
       } satisfies LanguageModelPromptOptions & { text: LanguageModelPrompt },
     });
@@ -267,13 +285,13 @@ class OllamaProvider implements Provider {
     }
   }
 
-  async fixGrammar(text: string, { model, dictionary }: Settings) {
+  async fixGrammar(text: string, settings: Settings) {
     const response: GenerateResponse | { error: string } | null =
       await chrome.runtime.sendMessage({
       type: "ollama.generate",
       data: {
-        model,
-        prompt: grammarPrompt(text, dictionary),
+        model: settings.model,
+        prompt: grammarPrompt(text, settings),
         format: outputSchemaJson,
         options: { temperature: 0 },
         // keep the model loaded so the first check after a pause isn't slow
@@ -691,6 +709,7 @@ class SuggestionCard {
     private onApply: (hunk: Hunk) => void,
     private onActiveChange: (hunk: Hunk | null) => void,
     private onAddWord: (word: string) => void,
+    private onIgnore: (hunk: Hunk) => void,
   ) {
     this.#card = document.createElement("div");
     this.#card.className = "aig-root aig-pop aig-card";
@@ -737,18 +756,22 @@ class SuggestionCard {
     }
     children.push(apply);
 
+    const secondary = (label: string, onClick: () => void) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "aig-card__secondary";
+      button.textContent = label;
+      button.addEventListener("click", () => {
+        this.hide();
+        onClick();
+      });
+      return button;
+    };
     const word = dictionaryCandidate(removed);
     if (word) {
-      const add = document.createElement("button");
-      add.type = "button";
-      add.className = "aig-card__secondary";
-      add.textContent = `Add ${quoted(word)} to dictionary`;
-      add.addEventListener("click", () => {
-        this.hide();
-        this.onAddWord(word);
-      });
-      children.push(add);
+      children.push(secondary(`Add ${quoted(word)} to dictionary`, () => this.onAddWord(word)));
     }
+    children.push(secondary("Ignore", () => this.onIgnore(hunk)));
     this.#card.replaceChildren(...children);
     this.#card.dataset.open = "";
 
@@ -838,6 +861,7 @@ class Control {
       (hunk) => this.#applyHunks([hunk]),
       (hunk) => this.#underlines.setActive(hunk),
       (word) => void addToDictionary(word),
+      (hunk) => void ignoreChange(changeOf(this.#text, hunk)),
     );
     document.addEventListener("mousemove", this.#handleMouseMove, { passive: true });
     // capture: scrolls inside any container move the text too
@@ -1063,7 +1087,8 @@ class Control {
       return;
     }
 
-    this.#result = before + keepUserText(core, result.value.trim(), settings.dictionary) + after;
+    this.#result =
+      before + keepUserText(core, result.value.trim(), settings.dictionary, settings.ignored) + after;
     this.#showResult();
   }
 
@@ -1084,10 +1109,11 @@ class Control {
     }
   }
 
-  // Drops suggestions on words just added to the dictionary, without a new model call.
+  // Drops suggestions on words just added to the dictionary or on changes just ignored,
+  // without a new model call.
   public refresh() {
     if (this.#button.dataset.state === "wrong") {
-      this.#result = keepUserText(this.#text, this.#result, settings.dictionary);
+      this.#result = keepUserText(this.#text, this.#result, settings.dictionary, settings.ignored);
       this.#showResult();
     }
   }
@@ -1279,12 +1305,14 @@ const updateTargets = (provider: Provider | null) => {
 const main = async () => {
   settings = await loadSettings();
   onSettingsChange((next) => {
-    const dictionaryChanged = next.dictionary.join("\n") !== settings.dictionary.join("\n");
+    const filtersChanged =
+      JSON.stringify([next.dictionary, next.ignored]) !==
+      JSON.stringify([settings.dictionary, settings.ignored]);
     settings = next;
     if (siteDisabled()) {
       control?.destroy();
       control = null;
-    } else if (dictionaryChanged) {
+    } else if (filtersChanged) {
       control?.refresh();
     }
   });
