@@ -879,7 +879,7 @@ type RewriteTarget = { start: number; end: number; text: string };
 class RewriteCard {
   #card: HTMLDivElement;
   #target: RewriteTarget | null = null;
-  #anchor: DOMRect | null = null;
+  #anchor: (() => DOMRect) | null = null;
   // an offer follows the pointer like the suggestion card; a running or finished rewrite stays
   #pinned = false;
   #run = 0;
@@ -907,7 +907,11 @@ class RewriteCard {
     return this.#target !== null;
   }
 
-  offer(target: RewriteTarget, anchor: DOMRect) {
+  get isPinned() {
+    return this.#pinned;
+  }
+
+  offer(target: RewriteTarget, anchor: () => DOMRect) {
     clearTimeout(this.#hideTimer);
     if (this.#pinned || this.#target?.start === target.start) {
       return;
@@ -921,7 +925,7 @@ class RewriteCard {
     this.#show(target, anchor, [this.#label(`Long sentence, ${wordCount(target.text)} words`), button]);
   }
 
-  async open(target: RewriteTarget, anchor: DOMRect) {
+  async open(target: RewriteTarget, anchor: () => DOMRect) {
     clearTimeout(this.#hideTimer);
     this.#pinned = true;
     const run = ++this.#run;
@@ -977,20 +981,20 @@ class RewriteCard {
     return note;
   }
 
-  #show(target: RewriteTarget, anchor: DOMRect, children: HTMLElement[]) {
+  #show(target: RewriteTarget, anchor: () => DOMRect, children: HTMLElement[]) {
     this.#target = target;
     this.#anchor = anchor;
     this.#card.replaceChildren(...children);
     this.#card.dataset.open = "";
-    this.#position();
+    this.reposition();
   }
 
-  #position() {
+  reposition() {
     const anchor = this.#anchor;
     if (!anchor) {
       return;
     }
-    computePosition({ getBoundingClientRect: () => anchor }, this.#card, {
+    computePosition({ getBoundingClientRect: anchor }, this.#card, {
       placement: "bottom-start",
       strategy: "fixed",
       middleware: [offset(6), flip(), shift({ padding: 8 })],
@@ -1071,7 +1075,7 @@ class Control {
   #longRanges: { start: number; end: number }[] = [];
   #rewriteCard: RewriteCard;
   #rewriteButton: HTMLButtonElement;
-  #selection: { target: RewriteTarget; rect: DOMRect } | null = null;
+  #selection: { target: RewriteTarget; anchor: () => DOMRect } | null = null;
   #selectionTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(
@@ -1099,7 +1103,7 @@ class Control {
       const selection = this.#selection;
       delete this.#rewriteButton.dataset.open;
       if (selection) {
-        this.#rewriteCard.open(selection.target, selection.rect);
+        this.#rewriteCard.open(selection.target, selection.anchor);
       }
     });
     document.body.appendChild(this.#rewriteButton);
@@ -1201,7 +1205,9 @@ class Control {
     if (long) {
       const { start, end } = long.hunk;
       const index = this.#longRanges.findIndex((r) => r.start === start);
-      this.#rewriteCard.offer({ start, end, text: this.#text.slice(start, end) }, this.#long.bounds(index));
+      this.#rewriteCard.offer({ start, end, text: this.#text.slice(start, end) }, () =>
+        this.#long.bounds(index),
+      );
     } else {
       this.#rewriteCard.scheduleHide();
     }
@@ -1211,7 +1217,12 @@ class Control {
     this.#underlines.draw();
     this.#long.draw();
     this.#card.hide();
-    this.#rewriteCard.hide();
+    // a rewrite the user asked for follows its text instead of being thrown away
+    if (this.#rewriteCard.isPinned) {
+      this.#rewriteCard.reposition();
+    } else {
+      this.#rewriteCard.hide();
+    }
     this.#hideRewriteButton();
   };
 
@@ -1224,6 +1235,9 @@ class Control {
 
   #handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Escape" && (this.#rewriteCard.isOpen || this.#selection)) {
+      // the page would otherwise also cancel an edit or close its dialog
+      e.preventDefault();
+      e.stopPropagation();
       this.#rewriteCard.hide();
       this.#hideRewriteButton();
     }
@@ -1243,18 +1257,19 @@ class Control {
   #updateSelection = () => {
     const target = this.#provider && !this.#rewriteCard.isOpen ? this.#selectedTarget() : null;
     const el = this.textArea;
-    const rects = !target
-      ? []
-      : el instanceof HTMLTextAreaElement
-        ? textareaRects(el, target.start, target.end)
-        : [...getSelection()!.getRangeAt(0).getClientRects()];
-    const rect = rects.filter((r) => r.width > 0).at(-1);
-    if (!target || !rect) {
+    // measured again on scroll, so the card can follow the text
+    const range = !target || el instanceof HTMLTextAreaElement ? null : getSelection()!.getRangeAt(0).cloneRange();
+    const anchor = () =>
+      (range ? [...range.getClientRects()] : textareaRects(el as HTMLTextAreaElement, target!.start, target!.end))
+        .filter((r) => r.width > 0)
+        .at(-1) ?? new DOMRect();
+    const rect = target && anchor();
+    if (!target || !rect?.width) {
       this.#hideRewriteButton();
       return;
     }
-    this.#selection = { target, rect };
-    computePosition({ getBoundingClientRect: () => rect }, this.#rewriteButton, {
+    this.#selection = { target, anchor };
+    computePosition({ getBoundingClientRect: anchor }, this.#rewriteButton, {
       placement: "bottom-end",
       strategy: "fixed",
       middleware: [offset(6), flip(), shift({ padding: 8 })],
@@ -1297,9 +1312,10 @@ class Control {
     const context = sentenceAround(this.#text, start + lead, start + lead + part.length);
     const fragment = isFragment(context);
     const variants = await this.#provider.rewrite(part, settings, fragment ? context : null);
+    // also for a whole sentence selected without its stop, which the text still has after it
     return keepVariants(
       part,
-      fragment ? variants.map((v) => fitFragment(v, { part, ...context })) : variants,
+      variants.map((v) => fitFragment(v, { part, ...context })),
       settings.dictionary,
     );
   };
@@ -1317,7 +1333,11 @@ class Control {
   };
 
   #setLong() {
-    const ranges = this.#provider ? longSentences(this.#text) : [];
+    // same part of the text as the check: no underlines in an email signature
+    const { before, core } = splitCheckable(this.#text);
+    const ranges = this.#provider
+      ? longSentences(core).map((r) => ({ start: r.start + before.length, end: r.end + before.length }))
+      : [];
     const changed = JSON.stringify(ranges) !== JSON.stringify(this.#longRanges);
     this.#longRanges = ranges;
     this.#long.set(
@@ -1355,7 +1375,7 @@ class Control {
       item.title = "Rewrite this sentence";
       item.addEventListener("click", () => {
         this.#tooltip.hide();
-        this.#rewriteCard.open({ start, end, text }, this.#long.bounds(i));
+        this.#rewriteCard.open({ start, end, text }, () => this.#long.bounds(i));
       });
       body.append(item);
     });

@@ -399,8 +399,8 @@ node bench/rewrite-bench.mjs gemma4:e2b-it-qat qwen3.5:4b
 
 | Model | Cases with a variant shown | Variants kept | Median latency |
 |---|---|---|---|
-| gemma4:e2b-it-qat | 10/10 | 30/30 | 1.49s |
-| qwen3.5:4b | 10/10 | 28/30 | 2.58s |
+| gemma4:e2b-it-qat | 10/10 | 30/30 | 1.55s |
+| qwen3.5:4b | 10/10 | 28/30 | 2.74s |
 
 qwen3.5:4b lost its two variants by writing "dix" for "10". The checks can't tell whether a rewrite kept the meaning: "it would be really good if we could maybe try to" became "we could try to", which passes. Read `bench/report-rewrite.md` for that.
 

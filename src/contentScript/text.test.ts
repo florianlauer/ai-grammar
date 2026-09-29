@@ -158,3 +158,28 @@ test("ignoring a deleted word doesn't store the word after it", () => {
   assert.equal(change.from.trim(), "the");
   assert.equal(keepUserText("the the dog", "the dog", [], [change]), "the the dog");
 });
+
+test("a selection ending inside aujourd'hui or peut-être takes the whole word", () => {
+  const text = "c'est bien aujourd'hui, peut-être demain";
+  const a = wholeWords(text, 0, text.indexOf("'hui"));
+  assert.equal(text.slice(a.start, a.end), "c'est bien aujourd'hui");
+  const b = wholeWords(text, text.indexOf("peut"), text.indexOf("-être"));
+  assert.equal(text.slice(b.start, b.end), "peut-être");
+});
+
+test("a rewrite of a sentence without its stop doesn't add a second one", () => {
+  const text = "The cat sat on the mat. Then it left.";
+  const part = "The cat sat on the mat";
+  const context = sentenceAround(text, 0, part.length);
+  assert.equal(fitFragment("The cat was sitting on the mat.", { part, ...context }), "The cat was sitting on the mat");
+  assert.equal(
+    fitFragment("the cat was on the mat.", { part: "the cat sat on the mat", before: "I think ", after: ", then it left." }),
+    "the cat was on the mat",
+  );
+});
+
+test("words at the start of a sentence, a quote or a bullet aren't names", () => {
+  assert.equal(rejectVariant("Hmm… Je ne sais pas trop.", "Hmm… je ne suis pas sûr."), null);
+  assert.equal(rejectVariant("- Envoyer le rapport\n- Relancer le client", "- Envoie le rapport\n- Relance le client"), null);
+  assert.equal(rejectVariant('He said "no." Then he left.', 'He said "no" and left.'), null);
+});

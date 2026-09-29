@@ -1,16 +1,17 @@
 import ollama, { GenerateResponse, Ollama } from "ollama/browser";
 
-// One per kind of request, so a new check cancels the previous check but not a rewrite the
-// user is waiting for.
+// One per tab and kind of request, so a new check cancels the previous check in the same
+// tab but not a rewrite the user is waiting for, nor another tab's request.
 type Channel = "check" | "rewrite";
-const controllers: Record<Channel, AbortController> = {
-  check: new AbortController(),
-  rewrite: new AbortController(),
-};
+// ponytail: entries for closed tabs stay until the service worker stops, a few bytes each
+const controllers = new Map<string, AbortController>();
 
-const restart = (channel: Channel = "check") => {
-  controllers[channel].abort();
-  return (controllers[channel] = new AbortController()).signal;
+const restart = (sender: chrome.runtime.MessageSender, channel: Channel = "check") => {
+  const key = `${sender.tab?.id}:${sender.frameId}:${channel}`;
+  controllers.get(key)?.abort();
+  const controller = new AbortController();
+  controllers.set(key, controller);
+  return controller.signal;
 };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -55,7 +56,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.type === "ollama.generate") {
-    ollamaGenerate(request.data, restart(request.channel))
+    ollamaGenerate(request.data, restart(sender, request.channel))
       .then((result) => sendResponse(result))
       // e.g. "model not found" after picking a model that isn't pulled
       .catch((e) => sendResponse({ error: String(e?.message ?? e) }));
@@ -87,7 +88,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.type === "gemini.generate") {
-    const signal = restart(request.channel);
+    const signal = restart(sender, request.channel);
     LanguageModel.create({ signal }).then((session) => {
       session
         .prompt(request.data.text, {
@@ -101,7 +102,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           console.warn(e);
           sendResponse(null);
         });
-    });
+    })
+      // aborted or unavailable before a session exists: answer anyway, or the tab waits forever
+      .catch((e) => {
+        console.warn(e);
+        sendResponse(null);
+      });
 
     return true;
   }

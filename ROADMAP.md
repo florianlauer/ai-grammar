@@ -51,7 +51,7 @@ What shipping it taught:
 - The prompt has to name the language. "Keep the original language" still got a French sentence translated to English, and "a French text gets French versions" turned an English one into French. The extension now counts common French and English words and writes "The text is in French" into the prompt.
 - A selection is often part of a sentence. The model gets the words before and after it, and the extension trims what small models add anyway: the word just before repeated, a capital, a final full stop. A selection that cuts a word is widened to the whole word.
 - Hovering a long sentence only offers a rewrite. Running the model on hover would start it every time the pointer crosses the text.
-- `bench/rewrite-bench.mjs`: gemma4 kept 30 of 30 variants on 10 texts with a 1.5 s median. qwen3.5:4b kept 28, losing two to "dix" for "10", and took 2.6 s.
+- `bench/rewrite-bench.mjs`: gemma4 kept 30 of 30 variants on 10 texts with a 1.5 s median. qwen3.5:4b kept 28, losing two to "dix" for "10", and took 2.7 s.
 
 ## 4. Change the tone
 
