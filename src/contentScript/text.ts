@@ -187,6 +187,30 @@ const essentials = (text: string, dictionary: string[]) => [
 
 const brackets = /[[\]{}<>]/g;
 
+// Small numbers spelled out, in English and French: gemma4 writes "two weeks" for "2 weeks",
+// and qwen3.5 "dix" for "10", which keeps the number.
+const spelled = [
+  ["zero", "zéro"],
+  ["one", "un", "une"],
+  ["two", "deux"],
+  ["three", "trois"],
+  ["four", "quatre"],
+  ["five", "cinq"],
+  ["six"],
+  ["seven", "sept"],
+  ["eight", "huit"],
+  ["nine", "neuf"],
+  ["ten", "dix"],
+  ["eleven", "onze"],
+  ["twelve", "douze"],
+];
+
+const keeps = (variant: string, essential: string) =>
+  variant.includes(essential) ||
+  (/^\d+$/.test(essential) ? (spelled[Number(essential)] ?? []) : []).some((word) =>
+    new RegExp(`(?<![\\p{L}\\p{N}])${word}(?![\\p{L}\\p{N}])`, "iu").test(variant),
+  );
+
 // Why a model's rewrite can't be shown, or null when it can. Small models drop numbers,
 // translate the text, or leave "[optional: reason]" placeholders.
 export const rejectVariant = (original: string, variant: string, dictionary: string[] = []) => {
@@ -194,7 +218,7 @@ export const rejectVariant = (original: string, variant: string, dictionary: str
   if (!v || v === original.trim()) {
     return "unchanged";
   }
-  const missing = essentials(original, dictionary).find((e) => !v.includes(e));
+  const missing = essentials(original, dictionary).find((e) => !keeps(v, e));
   if (missing) {
     return `dropped “${missing}”`;
   }

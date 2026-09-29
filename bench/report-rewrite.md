@@ -2,8 +2,8 @@
 
 | Model | Cases with a variant shown | Variants kept | Median latency |
 |---|---|---|---|
-| gemma4:e2b-it-qat | 10/10 | 30/30 | 1.55s |
-| qwen3.5:4b | 10/10 | 28/30 | 2.74s |
+| gemma4:e2b-it-qat | 10/10 | 30/30 | 1.62s |
+| qwen3.5:4b | 10/10 | 30/30 | 2.69s |
 
 ### 1. `Je pense qu'il faudrait qu'on se voie la semaine prochaine pour en discuter parce que sinon on va encore perdre du temps sur des sujets qui ont déjà été tranchés la dernière fois et ça commence à faire beaucoup de réunions pour pas grand chose au final.`
 
@@ -34,9 +34,9 @@
 | gemma4:e2b-it-qat | Nous avons déployé la version 2.3 sur https://app.sencrop.com hier soir, et depuis, Paul a remarqué que les alertes arrivent avec un retard de 10 minutes. | ✓ |
 | gemma4:e2b-it-qat | La v2.3 a été déployée sur https://app.sencrop.com hier soir. Depuis, Paul a constaté que les alertes arrivent avec un retard de 10 minutes. | ✓ |
 | gemma4:e2b-it-qat | Hier soir, nous avons déployé la v2.3 sur https://app.sencrop.com. Depuis ce déploiement, Paul a remarqué que les alertes sont arrivées avec un retard de 10 minutes. | ✓ |
-| qwen3.5:4b | On a déployé la version 2.3 sur https://app.sencrop.com ce soir, et Paul a constaté que les alertes sont désormais parues avec un délai de dix minutes. | ✗ dropped “10” |
+| qwen3.5:4b | On a déployé la version 2.3 sur https://app.sencrop.com ce soir, et Paul a constaté que les alertes sont désormais parues avec un délai de dix minutes. | ✓ |
 | qwen3.5:4b | Au cours de la soirée, le déploiement de la v2.3 sur https://app.sencrop.com a été effectué ; depuis lors, Paul observe que les alertes arrivent avec 10 minutes de retard. | ✓ |
-| qwen3.5:4b | La version 2.3 a été déployée sur https://app.sencrop.com hier soir. Depuis, Paul remarque que les alertes sont parues avec un délai de dix minutes. | ✗ dropped “10” |
+| qwen3.5:4b | La version 2.3 a été déployée sur https://app.sencrop.com hier soir. Depuis, Paul remarque que les alertes sont parues avec un délai de dix minutes. | ✓ |
 
 ### 4. `I wanted to ask you if maybe it would be possible for you to send me the report when you have some time.`
 
