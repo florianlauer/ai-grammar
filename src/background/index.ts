@@ -2,7 +2,7 @@ import ollama, { GenerateResponse, Ollama } from "ollama/browser";
 
 // One per tab and kind of request, so a new check cancels the previous check in the same
 // tab but not a rewrite the user is waiting for, nor another tab's request.
-type Channel = "check" | "rewrite";
+type Channel = "check" | "rewrite" | "meter";
 // ponytail: entries for closed tabs stay until the service worker stops, a few bytes each
 const controllers = new Map<string, AbortController>();
 

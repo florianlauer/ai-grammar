@@ -35,12 +35,42 @@ export const rewriteSchema = {
 // The words around a part of a sentence, when only part of it is rewritten.
 export type RewriteContext = { before: string; after: string };
 
+// The presets on the rewrite card. "clearer" is the plain rewrite.
+export const tones = {
+  clearer: { label: "Clearer", instruction: "so it reads more clearly" },
+  formal: { label: "More formal", instruction: "so it sounds more formal and professional" },
+  friendly: {
+    label: "Friendlier",
+    instruction: "so it sounds friendlier and warmer, without becoming casual",
+  },
+  confident: {
+    label: "More confident",
+    instruction: `so it sounds more confident: drop hedges like "I think", "maybe" or "just", and state things directly`,
+  },
+  shorter: {
+    label: "Shorter",
+    instruction: "so it is shorter: cut filler words and repetition, and keep every piece of information",
+  },
+} as const;
+
+export type Tone = keyof typeof tones;
+
 // Naming the language matters: with "keep the original language" gemma4 translated a French
 // sentence to English, and with "a French text gets French versions" it turned English into French.
-export const rewritePrompt = (text: string, settings: Settings, context: RewriteContext | null = null) => {
+export const rewritePrompt = ({
+  text,
+  settings,
+  context = null,
+  tone = "clearer",
+}: {
+  text: string;
+  settings: Settings;
+  context?: RewriteContext | null;
+  tone?: Tone;
+}) => {
   const language = languageOf((context?.before ?? "") + text + (context?.after ?? ""));
   const what = context ? "the part of a sentence below" : "the text below";
-  return `Rewrite ${what} so it reads more clearly. Give 3 different versions.${
+  return `Rewrite ${what} ${tones[tone].instruction}. Give 3 different versions.${
     language
       ? ` The text is in ${language}: write every version in ${language}.`
       : " Write every version in the language of the text."
@@ -52,3 +82,16 @@ export const rewritePrompt = (text: string, settings: Settings, context: Rewrite
     context ? `Before: ${context.before}\nAfter: ${context.after}\n\nPart to rewrite:` : "Text:"
   }\n${text}`;
 };
+
+export const formalityLevels = ["Very casual", "Casual", "Neutral", "Formal", "Very formal"] as const;
+
+export const formalitySchema = {
+  type: "object",
+  properties: { formality: { type: "integer", minimum: 1, maximum: 5 } },
+  required: ["formality"],
+};
+
+// One scale instead of a list of tones: asking gemma4 to name the tone gave "friendly, curt,
+// curt" for a neutral message, while this scale matched 10 of 12 labelled texts, 12 within one step.
+export const formalityPrompt = (text: string) =>
+  `Rate how formal the text below sounds, on a scale from 1 to 5: 1 is very casual (slang, texting), 2 is casual (a message to a colleague you know well), 3 is neutral, 4 is formal (a polite business email), 5 is very formal (official or legal letters). Judge the tone only, not the grammar.\n\nText:\n${text}`;

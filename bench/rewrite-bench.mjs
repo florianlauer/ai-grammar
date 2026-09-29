@@ -35,7 +35,10 @@ const rewrite = async (model, { text, part = text }) => {
   const start = text.indexOf(part);
   const context = sentenceAround(text, start, start + part.length);
   const fragment = isFragment(context);
-  const raw = await generate(model, rewritePrompt(part, defaultSettings, fragment ? context : null));
+  const raw = await generate(
+    model,
+    rewritePrompt({ text: part, settings: defaultSettings, context: fragment ? context : null }),
+  );
   return raw.map((v) => {
     const out = fitFragment(v, { part, ...context });
     return { out, rejected: rejectVariant(part, out) };

@@ -593,6 +593,85 @@
   outline-offset: 2px;
 }
 
+.aig-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* tone presets, on the card and for the whole text in the panel */
+.aig-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  white-space: normal;
+}
+
+.aig-chip {
+  padding: 4px 9px;
+  border: 1px solid var(--aig-hairline);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--aig-muted);
+  font: 500 12px/1.3 var(--aig-font);
+  cursor: pointer;
+  transition:
+    background-color 120ms var(--aig-ease-out),
+    border-color 120ms var(--aig-ease-out),
+    color 120ms var(--aig-ease-out);
+}
+
+.aig-chip:hover {
+  border-color: var(--aig-rewrite);
+  color: var(--aig-rewrite-ink);
+}
+
+.aig-chip[aria-pressed="true"] {
+  border-color: transparent;
+  background: var(--aig-rewrite-wash-strong);
+  color: var(--aig-rewrite-ink);
+}
+
+.aig-chip:focus-visible {
+  outline: 2px solid var(--aig-focus);
+  outline-offset: 1px;
+}
+
+/* how formal the text sounds, 1 to 5 */
+.aig-meter {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 4px 0;
+  color: var(--aig-muted);
+  font: 400 12px/1.4 var(--aig-font);
+}
+
+.aig-meter[hidden] {
+  display: none;
+}
+
+.aig-meter strong {
+  color: var(--aig-ink);
+  font-weight: 600;
+}
+
+.aig-meter__dots {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.aig-meter__dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--aig-hairline);
+}
+
+.aig-meter__dots span[data-on] {
+  background: var(--aig-rewrite);
+}
+
 /* panel labels once there are fixes and rewrites to tell apart */
 .aig-section {
   display: flex;
