@@ -14,6 +14,8 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
+    // src/prompts.ts is also imported by the benchmark, and node needs the extension
+    "allowImportingTsExtensions": true,
     "jsx": "react-jsx"
   },
   "include": ["src"],

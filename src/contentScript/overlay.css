@@ -22,6 +22,11 @@
   --aig-add-ink: oklch(46% 0.13 152);
   --aig-add-wash: oklch(72% 0.15 152 / 0.18);
   --aig-add-wash-strong: oklch(72% 0.15 152 / 0.3);
+  /* rewrites are optional, a matter of taste: violet, away from the red of mistakes */
+  --aig-rewrite: oklch(56% 0.19 290);
+  --aig-rewrite-ink: oklch(48% 0.19 290);
+  --aig-rewrite-wash: oklch(62% 0.17 290 / 0.12);
+  --aig-rewrite-wash-strong: oklch(62% 0.17 290 / 0.22);
   --aig-on-accent: oklch(100% 0 0);
   --aig-ok: oklch(58% 0.14 152);
   --aig-warn: oklch(64% 0.15 65);
@@ -56,6 +61,10 @@
   --aig-add-ink: oklch(82% 0.14 152);
   --aig-add-wash: oklch(72% 0.15 152 / 0.2);
   --aig-add-wash-strong: oklch(72% 0.15 152 / 0.32);
+  --aig-rewrite: oklch(70% 0.15 290);
+  --aig-rewrite-ink: oklch(82% 0.11 290);
+  --aig-rewrite-wash: oklch(66% 0.15 290 / 0.2);
+  --aig-rewrite-wash-strong: oklch(66% 0.15 290 / 0.32);
   --aig-shadow: 0 12px 32px -8px oklch(0% 0 0 / 0.6),
     0 2px 6px -2px oklch(0% 0 0 / 0.4);
 }
@@ -443,6 +452,201 @@
   opacity: 1;
 }
 
+/* long sentences: a lighter, dashed line, since nothing is wrong with them */
+.aig-layer[data-kind="rewrite"] .aig-mark {
+  z-index: 2147483645;
+}
+
+.aig-layer[data-kind="rewrite"] .aig-mark::after {
+  background: repeating-linear-gradient(90deg, var(--aig-rewrite) 0 5px, transparent 5px 8px);
+  opacity: 0.6;
+}
+
+/* ── Rewrites: the selection button and the variants card ───────────── */
+
+.aig-rewrite-button {
+  position: fixed;
+  z-index: 2147483647;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px 5px 8px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--aig-surface);
+  color: var(--aig-rewrite-ink);
+  box-shadow:
+    var(--aig-shadow),
+    0 0 0 1px var(--aig-hairline);
+  font: 600 12px/1 var(--aig-font);
+  cursor: pointer;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-3px);
+  transition:
+    opacity var(--aig-dur-out) var(--aig-ease-in),
+    transform var(--aig-dur-out) var(--aig-ease-in),
+    visibility 0s linear var(--aig-dur-out),
+    background-color 120ms var(--aig-ease-out);
+}
+
+.aig-rewrite-button[data-open] {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: none;
+  transition:
+    opacity var(--aig-dur-in) var(--aig-ease-out),
+    transform var(--aig-dur-in) var(--aig-ease-out),
+    visibility 0s,
+    background-color 120ms var(--aig-ease-out);
+}
+
+.aig-rewrite-button:hover {
+  background: var(--aig-rewrite-wash);
+}
+
+.aig-rewrite-button:focus-visible {
+  outline: 2px solid var(--aig-focus);
+  outline-offset: 2px;
+}
+
+.aig-rewrite-button svg,
+.aig-card__rewrite svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.aig-card--rewrite {
+  max-width: 360px;
+}
+
+.aig-card__label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 0;
+  color: var(--aig-muted);
+  font: 500 12px/1.4 var(--aig-font);
+}
+
+.aig-card__label[data-busy]::before {
+  content: "";
+  flex: none;
+  width: 11px;
+  height: 11px;
+  border: 1.5px solid var(--aig-hairline);
+  border-top-color: var(--aig-rewrite);
+  border-radius: 999px;
+  animation: aig-spin 0.9s linear infinite;
+}
+
+.aig-card__note {
+  margin: 0;
+  padding: 2px 4px;
+  color: var(--aig-muted);
+  font: 400 13px/1.45 var(--aig-font);
+}
+
+.aig-card__rewrite,
+.aig-card__variant {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--aig-rewrite-wash);
+  color: var(--aig-rewrite-ink);
+  font: 600 14px/1.3 var(--aig-font);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 120ms var(--aig-ease-out),
+    transform 120ms var(--aig-ease-out);
+}
+
+.aig-card__variant {
+  display: block;
+  color: var(--aig-ink);
+  font-weight: 400;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.aig-card__rewrite:hover,
+.aig-card__variant:hover {
+  background: var(--aig-rewrite-wash-strong);
+}
+
+.aig-card__rewrite:active,
+.aig-card__variant:active {
+  transform: scale(0.99);
+}
+
+.aig-card__rewrite:focus-visible,
+.aig-card__variant:focus-visible {
+  outline: 2px solid var(--aig-focus);
+  outline-offset: 2px;
+}
+
+/* panel labels once there are fixes and rewrites to tell apart */
+.aig-section {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 12px 0 4px;
+  color: var(--aig-muted);
+  font: 600 11px/1 var(--aig-font);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: normal;
+}
+
+.aig-section:first-child {
+  margin-top: 0;
+}
+
+.aig-section::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--aig-accent);
+}
+
+.aig-section[data-kind="rewrite"]::before {
+  background: var(--aig-rewrite);
+}
+
+.aig-rewrite-item {
+  display: block;
+  width: 100%;
+  margin: 0 -6px;
+  padding: 5px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--aig-rewrite-ink);
+  font: 400 14px/1.4 var(--aig-font);
+  text-align: left;
+  white-space: normal;
+  cursor: pointer;
+  transition: background-color 120ms var(--aig-ease-out);
+}
+
+.aig-rewrite-item:hover {
+  background: var(--aig-rewrite-wash);
+}
+
+.aig-rewrite-item:focus-visible {
+  outline: 2px solid var(--aig-focus);
+  outline-offset: 1px;
+}
+
 @keyframes aig-draw {
   from {
     opacity: 0;
@@ -503,8 +707,15 @@
 
   .aig-trigger:hover,
   .aig-trigger:active,
-  .aig-card__apply:active {
+  .aig-card__apply:active,
+  .aig-card__rewrite:active,
+  .aig-card__variant:active,
+  .aig-rewrite-button {
     transform: none;
+  }
+
+  .aig-card__label[data-busy]::before {
+    animation-duration: 2.4s;
   }
 
   .aig-trigger[data-state="loading"] svg {

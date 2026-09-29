@@ -4,8 +4,16 @@ import {
   changeOf,
   diffHunks,
   dictionaryCandidate,
+  fitFragment,
+  isFragment,
+  sentenceAround,
   keepUserText,
+  keepVariants,
+  languageOf,
+  longSentences,
+  rejectVariant,
   splitCheckable,
+  wholeWords,
 } from "./text.ts";
 
 test("keeps dictionary words and still applies other fixes", () => {
@@ -70,6 +78,77 @@ test("an ignored insertion is tied to the word it follows", () => {
     keepUserText("merci bonne journée, oui bien", "merci, bonne journée, oui, bien", [], [change]),
     "merci bonne journée, oui, bien",
   );
+});
+
+test("tells French from English", () => {
+  assert.equal(languageOf("Je pense qu'il faudrait qu'on se voie la semaine prochaine"), "French");
+  assert.equal(languageOf("Could you send me the report when you have time?"), "English");
+  assert.equal(languageOf("OK"), null);
+});
+
+test("a rewrite must keep numbers, links, names and dictionary words", () => {
+  const original = "On a déployé la v2.3 sur https://app.sencrop.com hier et depuis Paul voit 10 minutes de retard sur Sencrop";
+  const good = "Depuis le déploiement de la v2.3 sur https://app.sencrop.com hier, Paul voit 10 minutes de retard sur Sencrop.";
+  assert.equal(rejectVariant(original, good, ["Sencrop"]), null);
+  assert.match(rejectVariant(original, good.replace("10", "dix"))!, /10/);
+  assert.match(rejectVariant(original, good.replace("https://app.sencrop.com", "le site"))!, /https/);
+  assert.match(rejectVariant(original, good.replace("Paul", "il"))!, /Paul/);
+  assert.match(rejectVariant(original, good.replace(" sur Sencrop", ""), ["Sencrop"])!, /Sencrop/);
+});
+
+test("a rewrite can't add placeholders or switch language", () => {
+  const original = "Thanks for the update, I will look at it tomorrow.";
+  assert.equal(rejectVariant(original, "Thanks for the update [optional: brief reason]."), "added brackets or markup");
+  assert.equal(rejectVariant(original, "Merci pour la mise à jour, je regarde ça demain."), "switched to French");
+  assert.equal(rejectVariant(original, original), "unchanged");
+  assert.equal(rejectVariant(original, "Thanks for the update. I'll look at it tomorrow."), null);
+});
+
+test("the first word of a sentence isn't taken for a name", () => {
+  const original = "merci pour ton retour. Je regarde demain.";
+  assert.equal(rejectVariant(original, "Merci pour ton retour, je regarde ça demain."), null);
+});
+
+test("keeps the variants that pass, once each", () => {
+  assert.deepEqual(keepVariants("tu peux venir à 10h ?", ["Tu peux venir à 10h ?", "Tu peux venir à 10h ? ", "Tu viens à 11h ?"]), [
+    "Tu peux venir à 10h ?",
+  ]);
+});
+
+test("finds sentences over 30 words", () => {
+  const long = Array.from({ length: 32 }, (_, i) => `mot${i}`).join(" ") + ".";
+  const text = `Une phrase courte. ${long} Une autre, sur la v2.3 de https://example.com.`;
+  const ranges = longSentences(text);
+  assert.equal(ranges.length, 1);
+  assert.equal(text.slice(ranges[0].start, ranges[0].end), long);
+  assert.deepEqual(longSentences("Short one.\nAnother short one"), []);
+});
+
+test("a selection that cuts a word is widened to the whole word", () => {
+  const text = "on se voit la semaine prochaine.";
+  // "oit la semaine proch"
+  const { start, end } = wholeWords(text, 7, 27);
+  assert.equal(text.slice(start, end), "voit la semaine prochaine");
+  // starting on the space after "se" doesn't pull "se" in
+  const around = wholeWords(text, 5, 10);
+  assert.equal(text.slice(around.start, around.end), " voit");
+});
+
+test("finds the rest of the sentence around a selection", () => {
+  const text = "Merci. Je voulais te demander si tu as le temps avant le 15. Bonne journée";
+  const start = text.indexOf("voulais");
+  const end = text.indexOf(" avant");
+  assert.deepEqual(sentenceAround(text, start, end), { before: "Je ", after: " avant le 15." });
+  assert.equal(isFragment(sentenceAround(text, 7, text.indexOf(" Bonne"))), false);
+});
+
+test("a rewritten part fits back between the words around it", () => {
+  const context = { part: "voulais te demander si jamais tu avais le temps", before: "Merci. Je ", after: " de regarder." };
+  assert.equal(fitFragment("je voulais savoir si tu avais le temps", context), "voulais savoir si tu avais le temps");
+  assert.equal(fitFragment("Voulais savoir si tu as le temps.", context), "voulais savoir si tu as le temps");
+  assert.equal(fitFragment("voulais savoir si tu as le temps de", context), "voulais savoir si tu as le temps");
+  // a name from the original keeps its capital
+  assert.equal(fitFragment("Paul could try to", { part: "maybe Paul could try to", before: "I think ", after: " ship it." }), "Paul could try to");
 });
 
 test("ignoring a deleted word doesn't store the word after it", () => {

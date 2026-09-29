@@ -4,6 +4,10 @@
 
 - feat: "Ignore" on a suggestion refuses that change on every site. The settings list ignored changes and can restore them
 - feat: style settings: French "tu" or "vous", US or UK spelling, and whether informal words count as mistakes
+- feat: rewrite a selection, or a sentence over 30 words, into three variants, shown in violet apart from the fixes
+- feat: rewrite variants that drop a number, link, name or dictionary word, switch language, or add brackets are never shown
+- feat: the suggestions panel lists "Fixes" and "Rewrites" under their own labels
+- feat: `bench/rewrite-bench.mjs` grades rewrites with the same checks
 
 ## 0.8.0 [2026.09.29]
 

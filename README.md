@@ -18,6 +18,7 @@ This is a fork of [nucleartux/ai-grammar](https://github.com/nucleartux/ai-gramm
   - [One line agent install](#one-line-agent-install)
 - [Set up a model](#set-up-a-model)
 - [Using it](#using-it)
+  - [Rewrites](#rewrites)
 - [Troubleshooting](#troubleshooting)
 - [Settings](#settings)
 - [Benchmark](#benchmark)
@@ -44,6 +45,7 @@ You type in a text field. When you stop for half a second, the extension sends t
 - The extension asks Ollama to keep the model loaded, so checks don't pay a loading delay after a pause.
 - The overlays pick a light or dark look from the text color of the field, and respect `prefers-reduced-motion`.
 - A settings page picks the Ollama model, holds a personal dictionary of words to leave alone, and turns the extension off on chosen sites.
+- Select some text, or hover a sentence longer than 30 words, to get three rewrites of it. Rewrites are drawn in violet, apart from the red fixes, and a variant that drops a number, a name or a link is never shown.
 - "Ignore" on a suggestion refuses that change for good, on every site. The settings list the ignored changes and set a few style preferences: "tu" or "vous", US or UK spelling, and whether informal words count as mistakes.
 - The Ollama request passes a real JSON schema. Upstream passed a zod object, which recent Ollama servers reject with a 500.
 
@@ -270,7 +272,7 @@ Hover an underlined word to see its fix, and click the fix to apply it. If the w
 
 If you just disagree with the fix, click "Ignore". The extension remembers that exact change, for example "review" → "révision", and doesn't suggest it again on any site. It remembers the whole word around the change, so ignoring a comma after "merci" doesn't hide the commas it suggests elsewhere.
 
-Hover the badge to see all the changes in context. Click any change in that panel to apply only that one, or click "Accept all". Cmd+Z / Ctrl+Z undoes an applied fix. The bottom of the panel links to the settings and turns the extension off on the current site.
+Hover the badge to see all the changes in context. Click any change in that panel to apply only that one, or click "Accept all". Cmd+Z / Ctrl+Z undoes an applied fix. When the text has long sentences, the panel lists them under "Rewrites", below the fixes, and clicking one opens its rewrite card. The bottom of the panel links to the settings and turns the extension off on the current site.
 
 The extension checks `<textarea>` elements and rich text editors built on `contenteditable`. It skips single-line `<input>` fields, and fields where the page turned spell checking off (`spellcheck="false"`). Gmail is the exception: it turns spell checking off because it has its own checker, so the extension checks its compose window anyway.
 
@@ -279,6 +281,18 @@ In editors that make the whole page editable, like Notion, the extension checks 
 In emails, everything from the standard `-- ` signature line on is left out of the check, and so are blank lines.
 
 Google Docs doesn't work. It draws text on a canvas instead of putting it in the page, so there is no text for the extension to read.
+
+### Rewrites
+
+Select at least two words in a checked field and a "Rewrite" button shows up under the selection. Click it and the card lists three rewrites after a second or two. Click one to put it in place of the selection. Cmd+Z / Ctrl+Z brings the old text back. A selection that cuts a word in half is widened to the whole word first.
+
+Sentences longer than 30 words get a dashed violet underline. The extension finds them by counting words, without asking the model. Hovering one offers "Rewrite this sentence", and nothing runs until you click it, so moving the pointer over your text never starts the model.
+
+When you select only part of a sentence, the model gets the words before and after it and has to write a part that fits between them. It still repeats the word just before, capitalizes the start, or ends with a full stop now and then, so the extension trims those before showing the variant.
+
+Before showing a variant, the extension checks it. It has to keep every number, link, email address, dictionary word and capitalized name of the original, stay in the same language, and add no brackets or markdown. A variant that fails is dropped. If all of them fail, the card says so. Small models do fail these checks: qwen3.5:4b wrote "dix minutes" for "10 minutes", and gemma4 translated a French sentence to English until the prompt started naming the language.
+
+Rewrites run only when you ask. At 1.5 seconds each they are fine after a click and would be too slow on every typing pause.
 
 ## Troubleshooting
 
@@ -377,6 +391,19 @@ CASES=handwritten node bench/grammar-bench.mjs gemma4:e2b-it-qat qwen3.5:4b
 
 Each run writes `bench/report-<set>.md` with every input and every model's output, so you can judge the failures yourself. The grader accepts known valid variants, but it can still mark a correct answer as wrong.
 
+`bench/rewrite-bench.mjs` does the same for rewrites. It sends the extension's rewrite prompt for 10 French and English texts, 4 of them parts of a sentence, and grades each variant with the checks the extension runs before showing one. It imports the prompt and the checks from `src/`, so it needs Node 23.6 or newer.
+
+```shell
+node bench/rewrite-bench.mjs gemma4:e2b-it-qat qwen3.5:4b
+```
+
+| Model | Cases with a variant shown | Variants kept | Median latency |
+|---|---|---|---|
+| gemma4:e2b-it-qat | 10/10 | 30/30 | 1.49s |
+| qwen3.5:4b | 10/10 | 28/30 | 2.58s |
+
+qwen3.5:4b lost its two variants by writing "dix" for "10". The checks can't tell whether a rewrite kept the meaning: "it would be really good if we could maybe try to" became "we could try to", which passes. Read `bench/report-rewrite.md` for that.
+
 Results on an M2 Pro with Ollama 0.34.4:
 
 | Model | basic | handwritten | Median latency (basic / handwritten) |
@@ -400,7 +427,8 @@ npm run zip     # build, then zip build/ into package/ for a release
 
 - `src/contentScript/index.ts` finds text fields, calls the model, and draws the badge, the underlines and the popovers.
 - `src/contentScript/overlay.css` holds the overlay styles. They are scoped under `.aig-root` so the page's CSS can't reach them.
-- `src/contentScript/text.ts` holds the diff and filtering logic, with no DOM access. `npm test` runs its tests with Node's test runner (Node 23.6 or newer, which runs TypeScript directly).
+- `src/prompts.ts` holds the prompts. The benchmarks import it, so they send exactly what the extension sends.
+- `src/contentScript/text.ts` holds the diff and filtering logic, the rewrite checks and the sentence counting, with no DOM access. `npm test` runs its tests with Node's test runner (Node 23.6 or newer, which runs TypeScript directly).
 - `src/options/` is the settings page, and `src/settings.ts` reads and writes the settings.
 - `src/background/index.ts` is the service worker that talks to Ollama and to Chrome's `LanguageModel` API.
 - `src/manifest.ts` generates `manifest.json` through [CRXJS](https://crxjs.dev).

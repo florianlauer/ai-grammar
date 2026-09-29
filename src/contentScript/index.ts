@@ -15,9 +15,9 @@ import {
   ignoreChange,
   onSettingsChange,
   Settings,
-  Style,
   defaultSettings,
 } from "../settings";
+import { grammarPrompt, RewriteContext, rewritePrompt, rewriteSchema } from "../prompts";
 import {
   changeOf,
   diffHunks,
@@ -25,7 +25,14 @@ import {
   dictionaryCandidate,
   Hunk,
   keepUserText,
+  fitFragment,
+  isFragment,
+  keepVariants,
+  longSentences,
+  sentenceAround,
   splitCheckable,
+  wholeWords,
+  wordCount,
 } from "./text";
 
 const outputSchema = z.object({
@@ -34,30 +41,10 @@ const outputSchema = z.object({
 
 const outputSchemaJson = zodToJsonSchema(outputSchema);
 
+const rewriteOutput = z.object({ variants: z.array(z.string()) });
+
 // Kept current by main(); read at event time so changes in the options page apply at once.
 let settings: Settings = defaultSettings;
-
-// Only non-default choices add a line, so the default prompt stays the one the benchmark measured.
-const styleRules = ({ address, english, informal }: Style) =>
-  [
-    address !== "any" &&
-      `In French, address the reader as "${address}" and adjust the verbs and pronouns to match.`,
-    english === "us" && "In English, use American spelling (color, organize).",
-    english === "uk" && "In English, use British spelling (colour, organise).",
-    // a softer "replace informal words" was ignored by gemma4; the examples make it stick
-    informal === "fix" &&
-      `Informal and spoken words are mistakes here: replace them with their standard written form, for example "du coup" → "donc", "gonna" → "going to", "ouais" → "oui".`,
-  ].filter(Boolean);
-
-const grammarPrompt = (text: string, { dictionary, style }: Settings) => {
-  const rules = [
-    ...styleRules(style),
-    dictionary.length && `Leave these words exactly as written: ${dictionary.join(", ")}.`,
-  ].filter(Boolean);
-  return `Fix the spelling, grammar and punctuation of the text below. Typos may be missing letters, apostrophes or accents: use the surrounding context to recover the intended word. Keep the original language, meaning, tone and technical terms; change as little as possible. If the text is already correct, return it unchanged.${
-    rules.length ? `\n\n${rules.join("\n")}` : ""
-  }\n\nText:\n${text}`;
-};
 
 const buttonSize = 24;
 const buttonPadding = 8;
@@ -66,6 +53,8 @@ const buttonPadding = 8;
 const checkIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.801 10A10 10 0 1 1 17 3.335"/><path d="m9 11 3 3L22 4"/></svg>`;
 
 const powerIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 7v4"/><path d="M7.998 9.003a5 5 0 1 0 8-.005"/><circle cx="12" cy="12" r="10"/></svg>`;
+
+const rewriteIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"/></svg>`;
 
 const spinnerIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8" opacity="0.2"/><path d="M20 12a8 8 0 0 0-8-8"/></svg>`;
 
@@ -154,8 +143,8 @@ function createDiff(
 const isSpace = (c: string) => /\s/.test(c);
 
 // innerText adds line breaks for blocks/<br> and collapses whitespace, so walk it
-// alongside the DOM text nodes to map its offsets back to DOM positions.
-const rangeFromOffsets = (root: HTMLElement, start: number, end: number) => {
+// alongside the DOM text nodes to map its offsets to DOM positions.
+const textPositions = (root: HTMLElement) => {
   const text = root.innerText;
   const positions: ([Text, number] | undefined)[] = [];
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
@@ -170,6 +159,24 @@ const rangeFromOffsets = (root: HTMLElement, start: number, end: number) => {
       }
     }
   }
+  return positions;
+};
+
+// The innerText offsets of the characters a DOM range covers.
+const offsetsOfRange = (root: HTMLElement, range: Range) => {
+  let start = -1;
+  let end = -1;
+  textPositions(root).forEach((p, i) => {
+    if (p && range.comparePoint(p[0], p[1]) === 0 && range.comparePoint(p[0], p[1] + 1) === 0) {
+      if (start === -1) start = i;
+      end = i + 1;
+    }
+  });
+  return start === -1 ? null : { start, end };
+};
+
+const rangeFromOffsets = (root: HTMLElement, start: number, end: number) => {
+  const positions = textPositions(root);
 
   const range = document.createRange();
   range.selectNodeContents(root);
@@ -232,6 +239,8 @@ const replaceText = (
 interface Provider {
   isSupported: () => Promise<boolean>;
   fixGrammar: (text: string, settings: Settings) => Promise<string>;
+  // raw variants, before the checks in keepVariants
+  rewrite: (text: string, settings: Settings, context: RewriteContext | null) => Promise<string[]>;
 }
 
 class GeminiProvider implements Provider {
@@ -248,22 +257,30 @@ class GeminiProvider implements Provider {
     }
   }
 
-  async fixGrammar(text: string, settings: Settings) {
+  async #generate(channel: "check" | "rewrite", prompt: string, schema: Record<string, unknown>) {
     const response: string | null = await chrome.runtime.sendMessage({
       type: "gemini.generate",
+      channel,
       data: {
-        text: grammarPrompt(text, settings),
-        responseConstraint: outputSchemaJson,
+        text: prompt,
+        responseConstraint: schema,
       } satisfies LanguageModelPromptOptions & { text: LanguageModelPrompt },
     });
 
     if (!response) {
       throw new Error("Make sure that Gemini is working");
     }
+    return JSON.parse(response);
+  }
 
-    const json = outputSchema.parse(JSON.parse(response));
+  async fixGrammar(text: string, settings: Settings) {
+    const json = await this.#generate("check", grammarPrompt(text, settings), outputSchemaJson);
+    return outputSchema.parse(json).correctedText;
+  }
 
-    return json.correctedText;
+  async rewrite(text: string, settings: Settings, context: RewriteContext | null) {
+    const json = await this.#generate("rewrite", rewritePrompt(text, settings, context), rewriteSchema);
+    return rewriteOutput.parse(json).variants;
   }
 }
 
@@ -285,14 +302,15 @@ class OllamaProvider implements Provider {
     }
   }
 
-  async fixGrammar(text: string, settings: Settings) {
+  async #generate(channel: "check" | "rewrite", model: string, prompt: string, format: object) {
     const response: GenerateResponse | { error: string } | null =
       await chrome.runtime.sendMessage({
       type: "ollama.generate",
+      channel,
       data: {
-        model: settings.model,
-        prompt: grammarPrompt(text, settings),
-        format: outputSchemaJson,
+        model,
+        prompt,
+        format,
         options: { temperature: 0 },
         // keep the model loaded so the first check after a pause isn't slow
         keep_alive: -1,
@@ -307,10 +325,22 @@ class OllamaProvider implements Provider {
     if ("error" in response) {
       throw new Error(response.error);
     }
+    return JSON.parse(response.response);
+  }
 
-    const json = outputSchema.parse(JSON.parse(response.response));
+  async fixGrammar(text: string, settings: Settings) {
+    const json = await this.#generate("check", settings.model, grammarPrompt(text, settings), outputSchemaJson);
+    return outputSchema.parse(json).correctedText;
+  }
 
-    return json.correctedText;
+  async rewrite(text: string, settings: Settings, context: RewriteContext | null) {
+    const json = await this.#generate(
+      "rewrite",
+      settings.model,
+      rewritePrompt(text, settings, context),
+      rewriteSchema,
+    );
+    return rewriteOutput.parse(json).variants;
   }
 }
 
@@ -539,18 +569,21 @@ class Underlines {
   #items: Underline[] = [];
   #active: Hunk | null = null;
 
-  constructor(el: HTMLTextAreaElement | HTMLElement) {
+  // "fix" for mistakes, "rewrite" for long sentences, drawn in another colour
+  constructor(el: HTMLTextAreaElement | HTMLElement, kind: "fix" | "rewrite" = "fix") {
     this.#el = el;
     this.#layer = document.createElement("div");
     this.#layer.className = "aig-root aig-layer";
+    this.#layer.dataset.kind = kind;
     document.body.appendChild(this.#layer);
   }
 
-  set(text: string, hunks: Hunk[]) {
+  // animate=false re-anchors the same marks after an edit without replaying their draw-in
+  set(text: string, hunks: Hunk[], animate = true) {
     let textNode: Text | null = null;
     if (this.#el instanceof HTMLTextAreaElement) {
-      this.#mirror ??= this.#createMirror();
-      this.#copyTextareaStyle(this.#el, this.#mirror);
+      this.#mirror ??= createMirror();
+      copyTextareaStyle(this.#el, this.#mirror);
       // trailing space keeps a final empty line, so the max scroll matches the textarea
       this.#mirror.textContent = text + " ";
       textNode = this.#mirror.firstChild as Text;
@@ -571,10 +604,12 @@ class Underlines {
 
     // hide then reflow, so reused marks replay their draw-in animation for the new result
     this.#active = null;
-    for (const mark of this.#layer.children as HTMLCollectionOf<HTMLElement>) {
-      mark.style.display = "none";
+    if (animate) {
+      for (const mark of this.#layer.children as HTMLCollectionOf<HTMLElement>) {
+        mark.style.display = "none";
+      }
+      void this.#layer.offsetWidth;
     }
-    void this.#layer.offsetWidth;
     this.draw();
   }
 
@@ -599,7 +634,7 @@ class Underlines {
 
     if (this.#items.length > 0) {
       if (this.#el instanceof HTMLTextAreaElement && this.#mirror) {
-        this.#syncMirror(this.#el, this.#mirror);
+        syncMirror(this.#el, this.#mirror);
       }
       const box = this.#el.getBoundingClientRect();
 
@@ -634,6 +669,11 @@ class Underlines {
     }
   }
 
+  // The box around the nth item, to anchor a popover under all of it.
+  bounds(index: number) {
+    return this.#items[index].range.getBoundingClientRect();
+  }
+
   // Suggestion under the pointer, with the rect it was found in.
   at(x: number, y: number) {
     for (const item of this.#items) {
@@ -656,48 +696,62 @@ class Underlines {
     mark.className = "aig-root aig-mark";
     return mark;
   }
-
-  #createMirror() {
-    const mirror = document.createElement("div");
-    Object.assign(mirror.style, {
-      position: "fixed",
-      visibility: "hidden",
-      overflow: "hidden",
-      pointerEvents: "none",
-      margin: "0",
-      borderColor: "transparent",
-      boxSizing: "border-box",
-    });
-    document.body.appendChild(mirror);
-    return mirror;
-  }
-
-  #copyTextareaStyle(textarea: HTMLTextAreaElement, mirror: HTMLDivElement) {
-    const style = getComputedStyle(textarea);
-    for (const prop of mirroredProps) {
-      mirror.style[prop] = style[prop];
-    }
-    // a visible scrollbar narrows the textarea's text area; the mirror has none
-    const scrollbar =
-      textarea.offsetWidth -
-      textarea.clientWidth -
-      parseFloat(style.borderLeftWidth) -
-      parseFloat(style.borderRightWidth);
-    mirror.style.paddingRight = `${parseFloat(style.paddingRight) + scrollbar}px`;
-  }
-
-  #syncMirror(textarea: HTMLTextAreaElement, mirror: HTMLDivElement) {
-    const rect = textarea.getBoundingClientRect();
-    Object.assign(mirror.style, {
-      left: `${rect.left}px`,
-      top: `${rect.top}px`,
-      width: `${rect.width}px`,
-      height: `${rect.height}px`,
-    });
-    mirror.scrollTop = textarea.scrollTop;
-    mirror.scrollLeft = textarea.scrollLeft;
-  }
 }
+
+const createMirror = () => {
+  const mirror = document.createElement("div");
+  Object.assign(mirror.style, {
+    position: "fixed",
+    visibility: "hidden",
+    overflow: "hidden",
+    pointerEvents: "none",
+    margin: "0",
+    borderColor: "transparent",
+    boxSizing: "border-box",
+  });
+  document.body.appendChild(mirror);
+  return mirror;
+};
+
+const copyTextareaStyle = (textarea: HTMLTextAreaElement, mirror: HTMLDivElement) => {
+  const style = getComputedStyle(textarea);
+  for (const prop of mirroredProps) {
+    mirror.style[prop] = style[prop];
+  }
+  // a visible scrollbar narrows the textarea's text area; the mirror has none
+  const scrollbar =
+    textarea.offsetWidth -
+    textarea.clientWidth -
+    parseFloat(style.borderLeftWidth) -
+    parseFloat(style.borderRightWidth);
+  mirror.style.paddingRight = `${parseFloat(style.paddingRight) + scrollbar}px`;
+};
+
+const syncMirror = (textarea: HTMLTextAreaElement, mirror: HTMLDivElement) => {
+  const rect = textarea.getBoundingClientRect();
+  Object.assign(mirror.style, {
+    left: `${rect.left}px`,
+    top: `${rect.top}px`,
+    width: `${rect.width}px`,
+    height: `${rect.height}px`,
+  });
+  mirror.scrollTop = textarea.scrollTop;
+  mirror.scrollLeft = textarea.scrollLeft;
+};
+
+// Where a span of a textarea's text is on screen, measured on a throwaway mirror.
+const textareaRects = (textarea: HTMLTextAreaElement, start: number, end: number) => {
+  const mirror = createMirror();
+  copyTextareaStyle(textarea, mirror);
+  mirror.textContent = textarea.value + " ";
+  syncMirror(textarea, mirror);
+  const range = document.createRange();
+  range.setStart(mirror.firstChild!, start);
+  range.setEnd(mirror.firstChild!, end);
+  const rects = [...range.getClientRects()];
+  mirror.remove();
+  return rects;
+};
 
 // Small popup shown when hovering an underlined word.
 class SuggestionCard {
@@ -817,6 +871,168 @@ class SuggestionCard {
   }
 }
 
+// A span of the checked text to rewrite, with the text it had when picked.
+type RewriteTarget = { start: number; end: number; text: string };
+
+// The popup with rewrite variants. Hovering a long sentence only offers a rewrite, so
+// passing the pointer over text never costs a model call; a click runs it.
+class RewriteCard {
+  #card: HTMLDivElement;
+  #target: RewriteTarget | null = null;
+  #anchor: DOMRect | null = null;
+  // an offer follows the pointer like the suggestion card; a running or finished rewrite stays
+  #pinned = false;
+  #run = 0;
+  #hideTimer: ReturnType<typeof setTimeout> | undefined;
+
+  constructor(
+    // variants that passed the checks
+    private rewrite: (target: RewriteTarget) => Promise<string[]>,
+    private onApply: (target: RewriteTarget, variant: string) => void,
+  ) {
+    this.#card = document.createElement("div");
+    this.#card.className = "aig-root aig-pop aig-card aig-card--rewrite";
+    this.#card.role = "dialog";
+    this.#card.ariaLabel = "Rewrite";
+    // keep focus and selection in the input while clicking a variant
+    this.#card.addEventListener("mousedown", (e) => e.preventDefault());
+    document.body.appendChild(this.#card);
+  }
+
+  get element() {
+    return this.#card;
+  }
+
+  get isOpen() {
+    return this.#target !== null;
+  }
+
+  offer(target: RewriteTarget, anchor: DOMRect) {
+    clearTimeout(this.#hideTimer);
+    if (this.#pinned || this.#target?.start === target.start) {
+      return;
+    }
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "aig-card__rewrite";
+    button.innerHTML = rewriteIcon;
+    button.append("Rewrite this sentence");
+    button.addEventListener("click", () => this.open(target, anchor));
+    this.#show(target, anchor, [this.#label(`Long sentence, ${wordCount(target.text)} words`), button]);
+  }
+
+  async open(target: RewriteTarget, anchor: DOMRect) {
+    clearTimeout(this.#hideTimer);
+    this.#pinned = true;
+    const run = ++this.#run;
+    this.#show(target, anchor, [this.#label("Rewriting…", true)]);
+
+    let variants: string[];
+    try {
+      variants = await this.rewrite(target);
+    } catch (e) {
+      console.warn(e);
+      if (run === this.#run) {
+        this.#show(target, anchor, [this.#note("The rewrite failed. Check that the model is running.")]);
+      }
+      return;
+    }
+    if (run !== this.#run) {
+      return;
+    }
+    if (variants.length === 0) {
+      this.#show(target, anchor, [
+        this.#note("No rewrite kept every name, number and link, so none is shown. Try a shorter selection."),
+      ]);
+      return;
+    }
+    this.#show(target, anchor, [
+      this.#label("Rewrites"),
+      ...variants.map((variant) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "aig-card__variant";
+        button.textContent = variant;
+        button.addEventListener("click", () => {
+          this.hide();
+          this.onApply(target, variant);
+        });
+        return button;
+      }),
+    ]);
+  }
+
+  #label(text: string, busy = false) {
+    const label = document.createElement("div");
+    label.className = "aig-card__label";
+    label.toggleAttribute("data-busy", busy);
+    label.textContent = text;
+    return label;
+  }
+
+  #note(text: string) {
+    const note = document.createElement("p");
+    note.className = "aig-card__note";
+    note.textContent = text;
+    return note;
+  }
+
+  #show(target: RewriteTarget, anchor: DOMRect, children: HTMLElement[]) {
+    this.#target = target;
+    this.#anchor = anchor;
+    this.#card.replaceChildren(...children);
+    this.#card.dataset.open = "";
+    this.#position();
+  }
+
+  #position() {
+    const anchor = this.#anchor;
+    if (!anchor) {
+      return;
+    }
+    computePosition({ getBoundingClientRect: () => anchor }, this.#card, {
+      placement: "bottom-start",
+      strategy: "fixed",
+      middleware: [offset(6), flip(), shift({ padding: 8 })],
+    }).then(({ x, y, placement }) => {
+      Object.assign(this.#card.style, { left: `${x}px`, top: `${y}px` });
+      this.#card.dataset.side = placement;
+    });
+  }
+
+  // delayed so the pointer can travel from the sentence to the card
+  scheduleHide() {
+    if (!this.#target || this.#pinned) {
+      return;
+    }
+    clearTimeout(this.#hideTimer);
+    this.#hideTimer = setTimeout(() => this.hide(), 200);
+  }
+
+  keep() {
+    clearTimeout(this.#hideTimer);
+  }
+
+  hide() {
+    clearTimeout(this.#hideTimer);
+    // a rewrite still running is dropped when it comes back
+    this.#run++;
+    this.#pinned = false;
+    this.#target = null;
+    this.#anchor = null;
+    delete this.#card.dataset.open;
+  }
+
+  contains(target: EventTarget | null) {
+    return target instanceof Node && this.#card.contains(target);
+  }
+
+  destroy() {
+    this.hide();
+    this.#card.remove();
+  }
+}
+
 const getButtonVerticalPadding = (rect: Rect) => {
   if (rect.height < buttonSize + buttonPadding * 2) {
     return Math.max(0, rect.height - buttonSize) / 2;
@@ -850,6 +1066,13 @@ class Control {
   #textObserver: MutationObserver | null = null;
   // bumped on every update, so a slower, older check can tell it was superseded
   #run = 0;
+  // sentences over 30 words, underlined in the rewrite colour
+  #long: Underlines;
+  #longRanges: { start: number; end: number }[] = [];
+  #rewriteCard: RewriteCard;
+  #rewriteButton: HTMLButtonElement;
+  #selection: { target: RewriteTarget; rect: DOMRect } | null = null;
+  #selectionTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(
     public textArea: HTMLTextAreaElement | HTMLElement,
@@ -863,6 +1086,29 @@ class Control {
       (word) => void addToDictionary(word),
       (hunk) => void ignoreChange(changeOf(this.#text, hunk)),
     );
+    this.#long = new Underlines(textArea, "rewrite");
+    this.#rewriteCard = new RewriteCard(this.#rewrite, this.#applyRewrite);
+    this.#rewriteButton = document.createElement("button");
+    this.#rewriteButton.type = "button";
+    this.#rewriteButton.className = "aig-root aig-rewrite-button";
+    this.#rewriteButton.innerHTML = rewriteIcon;
+    this.#rewriteButton.append("Rewrite");
+    // keep the selection: it is what gets replaced
+    this.#rewriteButton.addEventListener("mousedown", (e) => e.preventDefault());
+    this.#rewriteButton.addEventListener("click", () => {
+      const selection = this.#selection;
+      delete this.#rewriteButton.dataset.open;
+      if (selection) {
+        this.#rewriteCard.open(selection.target, selection.rect);
+      }
+    });
+    document.body.appendChild(this.#rewriteButton);
+    document.addEventListener("selectionchange", this.#scheduleSelection);
+    for (const type of ["select", "mouseup", "keyup"]) {
+      textArea.addEventListener(type, this.#scheduleSelection);
+    }
+    document.addEventListener("mousedown", this.#handleMouseDown, true);
+    document.addEventListener("keydown", this.#handleKeyDown, true);
     document.addEventListener("mousemove", this.#handleMouseMove, { passive: true });
     // capture: scrolls inside any container move the text too
     window.addEventListener("scroll", this.#handleScroll, { capture: true, passive: true });
@@ -880,6 +1126,9 @@ class Control {
       this.#tooltip.element,
       this.#card.element,
       this.#underlines.element,
+      this.#long.element,
+      this.#rewriteCard.element,
+      this.#rewriteButton,
     ]) {
       el.dataset.theme = theme;
     }
@@ -918,7 +1167,7 @@ class Control {
 
   #showTooltip() {
     clearTimeout(this.#hideTimer);
-    if (this.#isCorrect) {
+    if (this.#isCorrect && !this.#longRanges.length) {
       return;
     }
     this.#tooltip.show();
@@ -935,19 +1184,183 @@ class Control {
       this.#card.keep();
       return;
     }
+    if (this.#rewriteCard.contains(e.target)) {
+      this.#rewriteCard.keep();
+      return;
+    }
+    // fixes are drawn over long sentences, so they win
     const hit = this.#underlines.at(e.clientX, e.clientY);
     if (hit) {
       const removed = this.#text.slice(hit.hunk.start, hit.hunk.end);
       this.#card.show(hit.hunk, removed, hit.rect);
+      this.#rewriteCard.scheduleHide();
+      return;
+    }
+    this.#card.scheduleHide();
+    const long = this.#long.at(e.clientX, e.clientY);
+    if (long) {
+      const { start, end } = long.hunk;
+      const index = this.#longRanges.findIndex((r) => r.start === start);
+      this.#rewriteCard.offer({ start, end, text: this.#text.slice(start, end) }, this.#long.bounds(index));
     } else {
-      this.#card.scheduleHide();
+      this.#rewriteCard.scheduleHide();
     }
   };
 
   #handleScroll = () => {
     this.#underlines.draw();
+    this.#long.draw();
     this.#card.hide();
+    this.#rewriteCard.hide();
+    this.#hideRewriteButton();
   };
+
+  #handleMouseDown = (e: MouseEvent) => {
+    const t = e.target;
+    if (!this.#rewriteCard.contains(t) && !(t instanceof Node && this.#rewriteButton.contains(t))) {
+      this.#rewriteCard.hide();
+    }
+  };
+
+  #handleKeyDown = (e: KeyboardEvent) => {
+    if (e.key === "Escape" && (this.#rewriteCard.isOpen || this.#selection)) {
+      this.#rewriteCard.hide();
+      this.#hideRewriteButton();
+    }
+  };
+
+  #scheduleSelection = () => {
+    clearTimeout(this.#selectionTimer);
+    this.#selectionTimer = setTimeout(this.#updateSelection, 120);
+  };
+
+  #hideRewriteButton() {
+    this.#selection = null;
+    delete this.#rewriteButton.dataset.open;
+  }
+
+  // Shows "Rewrite" under a selection of two words or more inside the checked field.
+  #updateSelection = () => {
+    const target = this.#provider && !this.#rewriteCard.isOpen ? this.#selectedTarget() : null;
+    const el = this.textArea;
+    const rects = !target
+      ? []
+      : el instanceof HTMLTextAreaElement
+        ? textareaRects(el, target.start, target.end)
+        : [...getSelection()!.getRangeAt(0).getClientRects()];
+    const rect = rects.filter((r) => r.width > 0).at(-1);
+    if (!target || !rect) {
+      this.#hideRewriteButton();
+      return;
+    }
+    this.#selection = { target, rect };
+    computePosition({ getBoundingClientRect: () => rect }, this.#rewriteButton, {
+      placement: "bottom-end",
+      strategy: "fixed",
+      middleware: [offset(6), flip(), shift({ padding: 8 })],
+    }).then(({ x, y }) => {
+      Object.assign(this.#rewriteButton.style, { left: `${x}px`, top: `${y}px` });
+      this.#rewriteButton.dataset.open = "";
+    });
+  };
+
+  #selectedTarget(): RewriteTarget | null {
+    const el = this.textArea;
+    let offsets: { start: number; end: number } | null;
+    if (el instanceof HTMLTextAreaElement) {
+      offsets =
+        document.activeElement === el ? { start: el.selectionStart, end: el.selectionEnd } : null;
+    } else {
+      const selection = getSelection();
+      const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+      offsets =
+        range && !range.collapsed && el.contains(range.commonAncestorContainer)
+          ? offsetsOfRange(el, range)
+          : null;
+    }
+    if (!offsets) {
+      return null;
+    }
+    // the variants replace whole words, so a word cut by the selection isn't left half there
+    const all = this.#readText();
+    const { start, end } = wholeWords(all, offsets.start, offsets.end);
+    const text = all.slice(start, end);
+    return wordCount(text) >= 2 ? { start, end, text } : null;
+  }
+
+  #rewrite = async ({ start, end, text }: RewriteTarget) => {
+    if (!this.#provider) {
+      throw new Error("AI is not supported");
+    }
+    const part = text.trim();
+    const lead = text.length - text.trimStart().length;
+    const context = sentenceAround(this.#text, start + lead, start + lead + part.length);
+    const fragment = isFragment(context);
+    const variants = await this.#provider.rewrite(part, settings, fragment ? context : null);
+    return keepVariants(
+      part,
+      fragment ? variants.map((v) => fitFragment(v, { part, ...context })) : variants,
+      settings.dictionary,
+    );
+  };
+
+  #applyRewrite = ({ start, end, text }: RewriteTarget, variant: string) => {
+    // the text may have changed while the model was writing
+    if (this.#readText().slice(start, end) !== text) {
+      return;
+    }
+    // the selection may include the spaces around the sentence; the variant doesn't
+    const lead = text.match(/^\s*/)![0];
+    const trail = text.match(/\s*$/)![0];
+    // not #applying: the text changed, so it needs a new check
+    replaceText(this.textArea, { start, end, replacement: lead + variant + trail });
+  };
+
+  #setLong() {
+    const ranges = this.#provider ? longSentences(this.#text) : [];
+    const changed = JSON.stringify(ranges) !== JSON.stringify(this.#longRanges);
+    this.#longRanges = ranges;
+    this.#long.set(
+      this.#text,
+      ranges.map((r) => ({ ...r, replacement: "" })),
+      changed,
+    );
+  }
+
+  // The panel lists fixes and rewrites under their own label once there are both kinds.
+  #panelBody(fixes: DocumentFragment | null) {
+    if (!this.#longRanges.length) {
+      return fixes ?? "";
+    }
+    const label = (text: string, kind: string) => {
+      const el = document.createElement("div");
+      el.className = "aig-section";
+      el.dataset.kind = kind;
+      el.textContent = text;
+      return el;
+    };
+    const body = document.createDocumentFragment();
+    if (fixes) {
+      const text = document.createElement("div");
+      text.append(fixes);
+      body.append(label("Fixes", "fix"), text);
+    }
+    body.append(label("Rewrites", "rewrite"));
+    this.#longRanges.forEach(({ start, end }, i) => {
+      const text = this.#text.slice(start, end);
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "aig-rewrite-item";
+      item.textContent = `${text.split(/\s+/).slice(0, 6).join(" ")}… (${wordCount(text)} words)`;
+      item.title = "Rewrite this sentence";
+      item.addEventListener("click", () => {
+        this.#tooltip.hide();
+        this.#rewriteCard.open({ start, end, text }, this.#long.bounds(i));
+      });
+      body.append(item);
+    });
+    return body;
+  }
 
   #setState(state: State) {
     debug("state", state.type, state.type === "error" ? state.text : "");
@@ -975,8 +1388,12 @@ class Control {
       case "correct":
         this.#show();
         this.#setGlyph(checkIcon, "No suggestions");
-        clearTimeout(this.#hideTimer);
-        this.#tooltip.hide();
+        if (this.#longRanges.length) {
+          this.#tooltip.content = { title: "No fixes", body: this.#panelBody(null) };
+        } else {
+          clearTimeout(this.#hideTimer);
+          this.#tooltip.hide();
+        }
         return;
       case "wrong": {
         const title = `${state.count} ${state.count === 1 ? "suggestion" : "suggestions"}`;
@@ -987,7 +1404,7 @@ class Control {
         );
         this.#tooltip.content = {
           title,
-          body: state.text,
+          body: this.#panelBody(state.text),
           action: { label: "Accept all", onClick: this.#handleWrongClick },
         };
         this.#button.addEventListener("click", this.#handleWrongClick);
@@ -1033,6 +1450,9 @@ class Control {
     const run = ++this.#run;
 
     this.#text = text;
+    this.#rewriteCard.hide();
+    this.#hideRewriteButton();
+    this.#setLong();
 
     this.updatePosition();
 
@@ -1129,6 +1549,7 @@ class Control {
       this.#applying = false;
     }
     this.#text = this.#readText();
+    this.#setLong();
     this.#showResult();
   }
 
@@ -1152,6 +1573,7 @@ class Control {
     this.#isVisible = isVisible(this.#button, this.textArea);
     this.#updateButtonVisibility();
     this.#underlines.draw();
+    this.#long.draw();
   }
 
   #handleErrorClick = () => {
@@ -1200,6 +1622,16 @@ class Control {
     this.#tooltip.destroy();
     this.#underlines.destroy();
     this.#card.destroy();
+    this.#long.destroy();
+    this.#rewriteCard.destroy();
+    this.#rewriteButton.remove();
+    clearTimeout(this.#selectionTimer);
+    document.removeEventListener("selectionchange", this.#scheduleSelection);
+    for (const type of ["select", "mouseup", "keyup"]) {
+      this.textArea.removeEventListener(type, this.#scheduleSelection);
+    }
+    document.removeEventListener("mousedown", this.#handleMouseDown, true);
+    document.removeEventListener("keydown", this.#handleKeyDown, true);
     document.removeEventListener("mousemove", this.#handleMouseMove);
     window.removeEventListener("scroll", this.#handleScroll, { capture: true });
     clearTimeout(this.#hideTimer);
