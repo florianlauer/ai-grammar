@@ -31,7 +31,7 @@ devenv shell -- cargo tauri build
 
 `cargo tauri build` makes `target/release/bundle/macos/AI Grammar.app` and a `.dmg`.
 
-On first launch, macOS asks for the Accessibility permission. The settings window shows a banner with a button to the right settings pane until it's granted. `cargo tauri dev` runs an unsigned binary, so macOS asks again after each rebuild that changes it. Without a Developer ID, the same goes for every update of the built app.
+On first launch, macOS asks for the Accessibility permission. The settings window shows a banner with a button to the right settings pane until it's granted. `cargo tauri dev` runs an unsigned binary, so macOS asks again after each rebuild that changes it. A release signed as in [Release](#release) keeps the permission from one update to the next.
 
 ### Windows
 
@@ -53,6 +53,40 @@ devenv shell -- cargo run --example probe -- <pid> <word> [replacement]
 ```
 
 It prints the field's text, frame, selection and the word's bounds, and replaces the word if you pass a replacement.
+
+## Release
+
+The macOS app is signed with a self-signed certificate. Gatekeeper doesn't accept it, but the signature stays the same from one build to the next, so macOS keeps the Accessibility permission across updates. An unsigned or ad hoc signed build looks like a new app every time.
+
+Create the certificate once, in Keychain Access: Certificate Assistant > Create a Certificate…, named `AI Grammar Self-Signed`, with the identity type "Self Signed Root" and the certificate type "Code Signing". Export it to a `.p12` and keep it: a build signed with another certificate loses the permission on every Mac.
+
+Bump `version` in `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`, then build and check:
+
+```shell
+cd desktop/src-tauri
+APPLE_SIGNING_IDENTITY="AI Grammar Self-Signed" devenv shell -- cargo tauri build --bundles app,dmg
+# certificate leaf = H"…", the same hash for every build
+codesign -d -r- "target/release/bundle/macos/AI Grammar.app"
+# /usr/lib/libiconv.2.dylib
+otool -L "target/release/bundle/macos/AI Grammar.app/Contents/MacOS/ai-grammar-desktop" | grep iconv
+```
+
+The `otool` line checks what `build.rs` takes care of. The Nix linker of devenv links its own `libiconv` by its `/nix/store` path, and the signed app then dies at launch because macOS refuses a library signed by someone else.
+
+Build the Windows installer as in [Windows](#windows), then publish both under a `desktop-v` tag, apart from the extension's releases:
+
+```shell
+gh release create desktop-v0.1.0 \
+  "target/release/bundle/dmg/AI Grammar_0.1.0_aarch64.dmg" \
+  "target/x86_64-pc-windows-msvc/release/bundle/nsis/AI Grammar_0.1.0_x64-setup.exe" \
+  --title "Desktop 0.1.0" --notes "…"
+```
+
+Nothing is notarized, so the first launch takes a few clicks:
+
+- macOS blocks the downloaded app. In System Settings > Privacy & Security, "Open Anyway" at the bottom lets it run. `xattr -dr com.apple.quarantine "/Applications/AI Grammar.app"` does the same.
+- The settings window then asks for the Accessibility permission, and its button opens the right pane.
+- On Windows, SmartScreen warns about the installer: "More info", then "Run anyway".
 
 ## How it works
 
