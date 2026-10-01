@@ -306,3 +306,15 @@ export const fitFragment = (
 
 export const isFragment = ({ before, after }: { before: string; after: string }) =>
   hasWords(before) || hasWords(after);
+
+// An insertion (e.g. a missing comma) has no text to underline: mark the word before it.
+export const markedSpan = (text: string, { start, end }: Hunk) => {
+  if (end > start) {
+    return [start, end];
+  }
+  const word = /(\S+)\s*$/.exec(text.slice(0, start));
+  if (word) {
+    return [word.index, word.index + word[1].length];
+  }
+  return [start, Math.min(start + 1, text.length)];
+};

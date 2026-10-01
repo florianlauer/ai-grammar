@@ -25,6 +25,7 @@ This is a fork of [nucleartux/ai-grammar](https://github.com/nucleartux/ai-gramm
 - [Settings](#settings)
 - [Benchmark](#benchmark)
 - [Developing](#developing)
+- [Desktop app](#desktop-app)
 - [Privacy](#privacy)
 - [Credits and license](#credits-and-license)
 
@@ -477,6 +478,10 @@ To publish a release, bump `version` in `package.json`, add an entry to `CHANGEL
 npm run zip
 gh release create v<version> package/AI-Grammar-Checker-<version>.zip --notes-file <notes>
 ```
+
+## Desktop app
+
+`desktop/` holds a macOS and Windows app that runs the same check in every app on the machine, not just the browser. It is at an early stage. See [desktop/README.md](./desktop/README.md).
 
 ## Privacy
 

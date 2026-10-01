@@ -1,0 +1,41 @@
+/* The app's own sections, in the options page's style (src/options/options.css). */
+
+/* .opt__section sets a display, which would override [hidden] */
+[hidden] {
+  display: none !important;
+}
+
+.opt__check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  font-size: 14px;
+}
+
+.opt__check input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--aig-add-ink);
+}
+
+.opt__row input.opt__field {
+  flex: none;
+  width: 180px;
+}
+
+.opt__list .opt__check {
+  flex: 1;
+}
+
+.opt__list .opt__meta {
+  margin: 0;
+  flex: none;
+}
+
+.opt__button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

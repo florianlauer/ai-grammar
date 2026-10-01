@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>AI Grammar</title>
+  </head>
+  <body>
+    <main class="aig-root opt">
+      <header class="opt__head">
+        <img src="/src-tauri/icons/128x128.png" alt="" width="32" height="32" />
+        <div>
+          <h1>AI Grammar</h1>
+          <p class="opt__meta" id="version"></p>
+        </div>
+      </header>
+
+      <section class="opt__section" id="permission" aria-labelledby="permission-title" hidden>
+        <h2 id="permission-title">Accessibility access</h2>
+        <p class="opt__hint">
+          AI Grammar reads the field you type in and puts fixes in place through macOS Accessibility. Turn on AI Grammar
+          in the list, then come back here.
+        </p>
+        <div><button class="opt__button" id="grant" type="button">Open Accessibility settings</button></div>
+      </section>
+
+      <section class="opt__section" aria-labelledby="model-title">
+        <h2 id="model-title">Model</h2>
+        <p
+          class="opt__hint"
+          id="model-status"
+          data-offline="Ollama isn't reachable. Start it to check your text and pick a model here."
+        >
+          Looking for Ollama…
+        </p>
+        <select id="model" class="opt__field" aria-labelledby="model-title"></select>
+        <p class="opt__load" id="model-load" role="status" hidden></p>
+      </section>
+
+      <section class="opt__section" aria-labelledby="dictionary-title">
+        <h2 id="dictionary-title">Dictionary</h2>
+        <p class="opt__hint">
+          Words AI Grammar never changes, such as names and jargon. Case counts: “Sencrop” is kept, “sencrop” is
+          still corrected.
+        </p>
+        <form class="opt__add" id="dictionary-form">
+          <input
+            class="opt__field"
+            name="value"
+            placeholder="Add a word"
+            aria-label="Word to add"
+            autocomplete="off"
+            spellcheck="false"
+            required
+          />
+          <button class="opt__button" type="submit">Add</button>
+        </form>
+        <ul class="opt__list" id="dictionary" data-empty="No words yet. Add one here or from a suggestion."></ul>
+      </section>
+
+      <section class="opt__section" id="style" aria-labelledby="style-title">
+        <h2 id="style-title">Style</h2>
+        <p class="opt__hint">Choices the model can't guess from one message.</p>
+        <label class="opt__row">
+          <span>French: address the reader as</span>
+          <select class="opt__field" name="address">
+            <option value="any">Leave as written</option>
+            <option value="tu">tu</option>
+            <option value="vous">vous</option>
+          </select>
+        </label>
+        <label class="opt__row">
+          <span>English spelling</span>
+          <select class="opt__field" name="english">
+            <option value="any">Leave as written</option>
+            <option value="us">US (color)</option>
+            <option value="uk">UK (colour)</option>
+          </select>
+        </label>
+        <label class="opt__row">
+          <span>Informal words like “du coup”</span>
+          <select class="opt__field" name="informal">
+            <option value="keep">Keep them</option>
+            <option value="fix">Count as mistakes</option>
+          </select>
+        </label>
+      </section>
+
+      <section class="opt__section" aria-labelledby="ignored-title">
+        <h2 id="ignored-title">Ignored changes</h2>
+        <p class="opt__hint">Changes you refused with “Ignore” on a suggestion. They aren't suggested again, in any app.</p>
+        <ul class="opt__list" id="ignored" data-empty="Nothing ignored yet."></ul>
+      </section>
+
+      <section class="opt__section" aria-labelledby="checking-title">
+        <h2 id="checking-title">Checking</h2>
+        <label class="opt__check"><input type="checkbox" id="check" /> Underline mistakes as I type</label>
+        <label class="opt__check">
+          <input type="checkbox" id="shortcut-enabled" /> Rewrite the selection with a shortcut
+        </label>
+        <label class="opt__row">
+          <span>Shortcut</span>
+          <input class="opt__field" id="shortcut" autocomplete="off" spellcheck="false" />
+        </label>
+        <p class="opt__hint">
+          Select text in any app and press the shortcut: a card shows the fixed text and rewrites in several tones.
+        </p>
+      </section>
+
+      <section class="opt__section" aria-labelledby="apps-title">
+        <h2 id="apps-title">Apps</h2>
+        <p class="opt__hint">
+          AI Grammar checks the apps that are checked here. An app shows up once you've typed in it, or add one that's
+          open. Browsers start unchecked, since the extension already checks them.
+        </p>
+        <form class="opt__add" id="apps-form">
+          <select class="opt__field" id="running" aria-label="Open app to add"></select>
+          <button class="opt__button" id="add-app" type="submit">Add</button>
+        </form>
+        <ul class="opt__list" id="apps" data-empty="No apps yet."></ul>
+      </section>
+    </main>
+    <script type="module" src="/src/settings.ts"></script>
+  </body>
+</html>

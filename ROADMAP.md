@@ -82,6 +82,15 @@ What shipping it taught:
 - The browser's language was the wrong clue: plenty of French speakers run their browser in English. The writer's language now comes from the text, since French false friends in the field point to a French speaker.
 - Only French has a list. English with no false friend gets the prompt without hints and without a writer's language.
 
+## 6. Desktop app (in progress)
+
+The same check in every app, not just the browser. It lives in `desktop/` and reuses the prompts and filters from `src/`. See [desktop/README.md](./desktop/README.md).
+
+- Level 2, underlines as you type, reads the focused field through Accessibility on macOS and UI Automation on Windows, then draws in a transparent window over it.
+- Level 1, a shortcut that rewrites the selection, is an option in the settings. It falls back to the clipboard in apps that don't expose their selection.
+- On Linux, level 1 can work everywhere. Level 2 is realistic on X11 only: Wayland doesn't tell an app where another app's text is on screen, and GNOME has no protocol for overlays. [desktop/LINUX.md](./desktop/LINUX.md) has the details.
+- Distribution needs a paid Apple Developer ID. Without it, macOS asks for the Accessibility permission again after every update.
+
 ## Not planned
 
 **Plagiarism check.** Finding copied text means comparing it with the web and with publication databases. That requires sending the text to a server, which breaks the extension's main promise: nothing leaves the machine.
