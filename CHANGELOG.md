@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## Unreleased
+
+- feat: desktop app for macOS and Windows in `desktop/`: underlines mistakes in the focused field of any app, and rewrites the selection with a shortcut (off by default). Each app can be turned off in its settings
+- docs: `desktop/LINUX.md`, what a Linux version could do on X11 and on Wayland
+
 ## 0.10.0 [2026.09.29]
 
 - feat: tone presets on the rewrite card: "More formal", "Friendlier", "More confident", "Shorter"

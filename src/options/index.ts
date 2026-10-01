@@ -102,7 +102,8 @@ const renderModel = () => {
   select.disabled = switching || !models?.length;
   $("model-status").textContent =
     models === null
-      ? "Ollama isn't reachable, so the extension uses the model built into Chrome. Start Ollama to pick a model here."
+      ? ($("model-status").dataset.offline ??
+        "Ollama isn't reachable, so the extension uses the model built into Chrome. Start Ollama to pick a model here.")
       : models.length === 0
         ? "Ollama is running but has no models. Pull one with “ollama pull gemma4:e2b-it-qat”."
         : "The Ollama model used for every check. Larger models are slower but catch more.";
@@ -125,11 +126,14 @@ const render = () => {
   for (const select of styleSelects) {
     select.value = settings.style[select.name as keyof Style];
   }
-  renderList({
-    list: $("sites"),
-    items: settings.disabledSites,
-    onRemove: (site) => saveSettings({ disabledSites: settings.disabledSites.filter((s) => s !== site) }),
-  });
+  // the desktop app has no sites, it lists apps instead
+  if ($("sites")) {
+    renderList({
+      list: $("sites"),
+      items: settings.disabledSites,
+      onRemove: (site) => saveSettings({ disabledSites: settings.disabledSites.filter((s) => s !== site) }),
+    });
+  }
 };
 
 const styleSelects = document.querySelectorAll<HTMLSelectElement>("#style select");
@@ -170,11 +174,13 @@ bindAdd({
   parse: (value) => value || null,
   onAdd: addToDictionary,
 });
-bindAdd({
-  form: $("sites-form"),
-  parse: hostnameOf,
-  onAdd: disableSite,
-});
+if ($("sites-form")) {
+  bindAdd({
+    form: $("sites-form"),
+    parse: hostnameOf,
+    onAdd: disableSite,
+  });
+}
 
 // also picks up words added from a suggestion card while this page is open
 onSettingsChange((next) => {

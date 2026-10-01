@@ -21,3 +21,10 @@
 
 # secrets
 secrets.*.js
+# devenv
+.devenv*
+devenv.local.nix
+
+# desktop
+/desktop/src-tauri/target
+/desktop/dist

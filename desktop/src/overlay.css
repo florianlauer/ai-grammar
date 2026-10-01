@@ -1,0 +1,30 @@
+/* The overlay's window, laid over the focused field. It lets the mouse through, except on the badge. */
+html,
+body {
+  margin: 0;
+  background: transparent;
+  overflow: hidden;
+  width: 100vw;
+  height: 100vh;
+}
+
+.aig-trigger {
+  z-index: 2147483647;
+}
+
+.aig-trigger[hidden] {
+  display: none;
+}
+
+/* :hover can't fire in a window the mouse goes through, so the polled pointer sets data-hover */
+.aig-trigger[data-hover] {
+  transform: scale(1.08);
+}
+
+.aig-trigger[data-state="wrong"][data-hover] {
+  box-shadow: var(--aig-accent-glow-hover);
+}
+
+.aig-trigger[data-state="correct"][data-hover] .aig-glyph {
+  animation: none;
+}
