@@ -6,7 +6,7 @@ use core_foundation::boolean::CFBoolean;
 use core_foundation::dictionary::CFDictionary;
 use core_foundation::number::CFNumber;
 use core_foundation::string::CFString;
-use core_foundation_sys::base::{CFGetTypeID, CFRange, CFRelease, CFTypeRef};
+use core_foundation_sys::base::{CFEqual, CFGetTypeID, CFRange, CFRelease, CFRetain, CFTypeRef};
 use core_graphics::event::CGEvent;
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use core_graphics::geometry::{CGPoint, CGRect, CGSize};
@@ -32,6 +32,13 @@ pub struct Field(AXUIElementRef);
 impl Drop for Field {
     fn drop(&mut self) {
         unsafe { CFRelease(self.0 as CFTypeRef) }
+    }
+}
+
+impl Clone for Field {
+    fn clone(&self) -> Self {
+        unsafe { CFRetain(self.0 as CFTypeRef) };
+        Field(self.0)
     }
 }
 
@@ -133,6 +140,11 @@ impl Platform {
         let name = running.localizedName().map(|n| n.to_string()).unwrap_or_default();
         let id = running.bundleIdentifier().map(|n| n.to_string()).unwrap_or_else(|| name.clone());
         Some((App { id, name }, pid))
+    }
+
+    // Whether two references are the same element of the same app.
+    pub fn same(&self, a: &Field, b: &Field) -> bool {
+        unsafe { CFEqual(a.0 as CFTypeRef, b.0 as CFTypeRef) != 0 }
     }
 
     pub fn focused(&mut self, pid: Pid) -> Option<Field> {

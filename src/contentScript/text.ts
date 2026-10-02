@@ -1,5 +1,7 @@
 // Text logic with no DOM access, so it runs under `node --test`.
 import { diffWords } from "diff";
+import { findFalseFriends } from "../falseFriends.ts";
+import type { Tone } from "../prompts.ts";
 import type { Change } from "../settings";
 
 // A single change, as offsets into the original text.
@@ -317,4 +319,24 @@ export const markedSpan = (text: string, { start, end }: Hunk) => {
     return [word.index, word.index + word[1].length];
   }
   return [start, Math.min(start + 1, text.length)];
+};
+
+// What a rewrite of `text`, found at `start` in the field's text `all`, asks the model, and how
+// its answers fit back in place. The extension and the desktop app both go through it.
+export const prepareRewrite = ({ all, start, text, tone }: { all: string; start: number; text: string; tone: Tone }) => {
+  const part = text.trim();
+  const lead = text.length - text.trimStart().length;
+  const context = sentenceAround(all, start + lead, start + lead + part.length);
+  // the whole field gives the writer's language away, even when the selection has no false friend
+  const falseFriends = tone === "natural" ? findFalseFriends(part).notes : [];
+  const writer = tone === "natural" ? { language: findFalseFriends(all).language, falseFriends } : null;
+  // also for a whole sentence selected without its stop, which the text still has after it
+  const fit = (variant: string) => fitFragment(variant, { part, ...context });
+  const keep = (variants: string[], dictionary: string[]) => {
+    const kept = keepVariants(part, variants.map(fit), dictionary);
+    // versions that still use a flagged word go last
+    const flagged = (v: string) => findFalseFriends(v).notes.length;
+    return tone === "natural" ? kept.sort((a, b) => flagged(a) - flagged(b)) : kept;
+  };
+  return { request: { text: part, context: isFragment(context) ? context : null, tone, writer }, falseFriends, fit, keep };
 };

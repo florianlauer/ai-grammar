@@ -46,6 +46,32 @@ struct Ui {
     card_frame: Option<Rect>,
     card_visible: bool,
     rewrite: Option<Rewrite>,
+    // the last show_card or hide_card the overlay sent: async commands can arrive out of order,
+    // and an older show_card must not bring back a card hidden since
+    card_seq: u64,
+    // the last place_card: the card's page sends one per change of size, and an older one
+    // landing last would size the card for content it no longer has
+    place_seq: u64,
+    // bumped when the card is closed or turned into a rewrite by something other than the
+    // overlay, which learns it through "card-hidden": what it sent before is stale
+    card_epoch: u64,
+}
+
+impl Ui {
+    // Whether a show_card or hide_card from the overlay is still the latest word on the card.
+    fn current(&mut self, seq: u64, epoch: u64) -> bool {
+        if seq < self.card_seq || epoch < self.card_epoch {
+            return false;
+        }
+        self.card_seq = seq;
+        true
+    }
+
+    // The card was taken over by its own buttons or the shortcut.
+    fn taken(&mut self, app: &AppHandle) {
+        self.card_epoch += 1;
+        let _ = app.emit_to("overlay", "card-hidden", self.card_epoch);
+    }
 }
 
 struct Shared {
@@ -181,6 +207,8 @@ fn floating_window(app: &AppHandle, label: &str, page: &str, click_through: bool
 #[serde(rename_all = "camelCase")]
 struct TickPayload {
     app: Option<platform::App>,
+    // which field `text` is from, see FieldState
+    id: u64,
     text: Option<String>,
     // the field, in the overlay's CSS pixels
     field: Rect,
@@ -196,7 +224,9 @@ fn on_tick(app: &AppHandle, shared: &Shared, tick: worker::Tick) {
         let mut config = shared.config.lock().unwrap();
         if !config.seen_apps.contains(seen) {
             config.seen_apps.push(seen.clone());
-            config.save(&shared.config_path);
+            if let Err(e) = config.save(&shared.config_path) {
+                eprintln!("couldn't save the settings: {e}");
+            }
             let config = config.clone();
             let _ = app.emit("config", config);
         }
@@ -207,7 +237,8 @@ fn on_tick(app: &AppHandle, shared: &Shared, tick: worker::Tick) {
             let mut ui = shared.ui.lock().unwrap();
             let was_shown = ui.overlay.take().is_some();
             // a fix card belongs to the field; a rewrite card stays until it is used or closed
-            let hide_card = was_shown && ui.rewrite.is_none() && ui.card_visible;
+            // also one show_card set up but place_card hasn't shown yet
+            let hide_card = was_shown && ui.rewrite.is_none() && (ui.card_visible || ui.card_anchor.is_some());
             if hide_card {
                 ui.card_visible = false;
                 ui.card_anchor = None;
@@ -246,6 +277,7 @@ fn on_tick(app: &AppHandle, shared: &Shared, tick: worker::Tick) {
     let over_card = card_visible && card_frame.is_some_and(|r| r.contains(tick.cursor));
     let payload = TickPayload {
         app: tick.app,
+        id: field.id,
         text: Some(field.text),
         field: local(&field.frame),
         marks: field.marks.iter().map(|rects| rects.iter().map(local).collect()).collect(),
@@ -266,8 +298,7 @@ fn get_config(shared: tauri::State<'_, Arc<Shared>>) -> Config {
 // same time don't undo each other. The keys of `core` are merged the same way.
 #[tauri::command(async)]
 fn save_config(app: AppHandle, shared: tauri::State<'_, Arc<Shared>>, changes: Value) -> Result<(), String> {
-    let config = {
-        let mut config = shared.config.lock().unwrap();
+    update_config(&app, &shared, |config| {
         let mut value = serde_json::to_value(&*config).map_err(|e| e.to_string())?;
         if let Value::Object(changes) = changes {
             for (key, change) in changes {
@@ -285,10 +316,39 @@ fn save_config(app: AppHandle, shared: tauri::State<'_, Arc<Shared>>, changes: V
             }
         }
         *config = serde_json::from_value(value).map_err(|e| e.to_string())?;
+        Ok(())
+    })
+}
+
+// Lists `app` or forgets it, and turns it on or off, from the current config rather than a
+// window's copy of the lists, so the settings and the card can't undo each other's changes.
+#[tauri::command(async)]
+fn set_app(app: AppHandle, shared: tauri::State<'_, Arc<Shared>>, target: platform::App, listed: bool, enabled: bool) -> Result<(), String> {
+    update_config(&app, &shared, |config| {
+        config.seen_apps.retain(|a| a.id != target.id);
+        config.disabled_apps.retain(|id| *id != target.id);
+        if listed {
+            if !enabled {
+                config.disabled_apps.push(target.id.clone());
+            }
+            config.seen_apps.push(target);
+        }
+        Ok(())
+    })
+}
+
+fn update_config(app: &AppHandle, shared: &Shared, change: impl FnOnce(&mut Config) -> Result<(), String>) -> Result<(), String> {
+    let config = {
+        let mut config = shared.config.lock().unwrap();
+        let mut next = config.clone();
+        change(&mut next)?;
+        // written under the lock, so an older save can't land after a newer one; kept only
+        // once on disk, so the settings don't show a change a restart would lose
+        next.save(&shared.config_path).map_err(|e| format!("couldn't save the settings: {e}"))?;
+        *config = next;
         config.clone()
     };
-    config.save(&shared.config_path);
-    register_shortcut(&app, &config);
+    register_shortcut(app, &config);
     let _ = app.emit("config", config);
     Ok(())
 }
@@ -299,9 +359,9 @@ fn set_marks(shared: tauri::State<'_, Arc<Shared>>, text: String, ranges: Vec<(u
 }
 
 #[tauri::command(async)]
-fn apply_fix(shared: tauri::State<'_, Arc<Shared>>, start: usize, end: usize, replacement: String, expected: String) -> bool {
+fn apply_fix(shared: tauri::State<'_, Arc<Shared>>, field: u64, start: usize, end: usize, replacement: String, expected: String) -> bool {
     let (reply, done) = channel();
-    let _ = shared.worker.lock().unwrap().send(Command::Apply { start, end, replacement, expected, reply });
+    let _ = shared.worker.lock().unwrap().send(Command::Apply { field, start, end, replacement, expected, reply });
     done.recv_timeout(Duration::from_secs(2)).unwrap_or(false)
 }
 
@@ -315,20 +375,39 @@ fn on_screen(app: &AppHandle, ui: &Ui, r: Rect) -> Option<Rect> {
 // Shows the card next to `anchor`, a rect of the overlay: a mark, or the badge for its panel.
 // The card sizes itself with place_card.
 #[tauri::command(async)]
-fn show_card(app: AppHandle, shared: tauri::State<'_, Arc<Shared>>, anchor: Rect, end: bool, payload: Value) {
+fn show_card(
+    app: AppHandle,
+    shared: tauri::State<'_, Arc<Shared>>,
+    anchor: Rect,
+    end: bool,
+    payload: Value,
+    seq: u64,
+    epoch: u64,
+) {
     let mut ui = shared.ui.lock().unwrap();
+    if !ui.current(seq, epoch) {
+        return;
+    }
     let Some(anchor) = on_screen(&app, &ui, anchor) else { return };
     ui.card_anchor = Some(anchor);
     ui.card_end = end;
     ui.rewrite = None;
-    drop(ui);
+    // sent under the lock, so the card shows what the last command set, rewrite or not
     let _ = app.emit_to("card", "card", payload);
 }
 
 // Turns the open card into rewrites of `selection`, as the shortcut does, starting with `tone`.
-// `anchor` is in the overlay, and without one the card stays where it is.
+// `anchor` is in the overlay, and without one the card stays where it is. `field` is the id of
+// the field the selection is from.
 #[tauri::command(async)]
-fn open_rewrite_text(app: AppHandle, shared: tauri::State<'_, Arc<Shared>>, selection: Selection, tone: String, anchor: Option<Rect>) {
+fn open_rewrite_text(
+    app: AppHandle,
+    shared: tauri::State<'_, Arc<Shared>>,
+    selection: Selection,
+    tone: String,
+    anchor: Option<Rect>,
+    field: u64,
+) {
     let text = selection.text.clone();
     let mut ui = shared.ui.lock().unwrap();
     if let Some(anchor) = anchor.and_then(|a| on_screen(&app, &ui, a)) {
@@ -336,7 +415,8 @@ fn open_rewrite_text(app: AppHandle, shared: tauri::State<'_, Arc<Shared>>, sele
         ui.card_end = false;
     }
     ui.rewrite = Some(Rewrite { selection, via_clipboard: false });
-    drop(ui);
+    ui.taken(&app);
+    let _ = shared.worker.lock().unwrap().send(Command::Target { field });
     let _ = app.emit_to("card", "card", json!({ "kind": "rewrite", "text": text, "tone": tone }));
 }
 
@@ -348,13 +428,21 @@ const PAD_BOTTOM: f64 = 16.0;
 // Places the card window for a popover of `width` by `height`, and says on which side of
 // its anchor it went, for the popover's open transition.
 #[tauri::command(async)]
-fn place_card(app: AppHandle, shared: tauri::State<'_, Arc<Shared>>, width: f64, height: f64) -> &'static str {
-    let Some(card) = app.get_webview_window("card") else { return "bottom" };
+// None when a newer call came first. One call at a time, so an older one can't move the
+// window after a newer one did.
+fn place_card(app: AppHandle, shared: tauri::State<'_, Arc<Shared>>, width: f64, height: f64, seq: u64) -> Option<&'static str> {
+    static PLACING: Mutex<()> = Mutex::new(());
+    let _placing = PLACING.lock().unwrap();
+    let card = app.get_webview_window("card")?;
     let (Some(anchor), end) = ({
-        let ui = shared.ui.lock().unwrap();
+        let mut ui = shared.ui.lock().unwrap();
+        if seq < ui.place_seq {
+            return None;
+        }
+        ui.place_seq = seq;
         (ui.card_anchor, ui.card_end)
     }) else {
-        return "bottom";
+        return Some("bottom");
     };
     let s = scale(&card);
     let (w, h) = (width * s, height * s);
@@ -374,42 +462,69 @@ fn place_card(app: AppHandle, shared: tauri::State<'_, Arc<Shared>>, width: f64,
     place(&card, r);
     {
         let mut ui = shared.ui.lock().unwrap();
+        // closed while it was being placed
+        if ui.card_anchor.is_none() {
+            return Some(side);
+        }
         ui.card_frame = Some(r);
         ui.card_visible = true;
     }
     set_visible(&app, "card", true);
-    side
+    // a hide_card between the check and the show cleared the anchor: hidden again
+    if shared.ui.lock().unwrap().card_anchor.is_none() {
+        set_visible(&app, "card", false);
+    }
+    Some(side)
+}
+
+// For the overlay when its page loads, which may be a reload after the epoch moved on.
+// Async like the rest: it takes the ui lock, which must not block the main thread.
+#[tauri::command(async)]
+fn card_epoch(shared: tauri::State<'_, Arc<Shared>>) -> u64 {
+    shared.ui.lock().unwrap().card_epoch
 }
 
 #[tauri::command(async)]
-fn hide_card(app: AppHandle, shared: tauri::State<'_, Arc<Shared>>) {
+// `seq` and `epoch` when the overlay sends it, see Ui::card_seq; the card itself sends neither.
+fn hide_card(app: AppHandle, shared: tauri::State<'_, Arc<Shared>>, seq: Option<u64>, epoch: Option<u64>) {
     let mut ui = shared.ui.lock().unwrap();
+    match seq {
+        Some(seq) if !ui.current(seq, epoch.unwrap_or(0)) => return,
+        // the overlay knows it closed the card: telling it late would wipe a card opened since
+        Some(_) => {}
+        None => ui.taken(&app),
+    }
     ui.card_visible = false;
     // place_card runs off the main thread and may come late: without an anchor it does nothing
     ui.card_anchor = None;
     ui.rewrite = None;
     drop(ui);
     set_visible(&app, "card", false);
-    let _ = app.emit_to("overlay", "card-hidden", ());
 }
 
 // Level 1: puts the rewrite in place of the selection the card was opened on.
 #[tauri::command(async)]
 fn replace_selection(app: AppHandle, shared: tauri::State<'_, Arc<Shared>>, text: String) -> bool {
     let rewrite = shared.ui.lock().unwrap().rewrite.take();
-    hide_card(app, shared.clone());
+    hide_card(app, shared.clone(), None, None);
     let Some(rewrite) = rewrite else { return false };
+    let selected = rewrite.selection.text.clone();
     if !rewrite.via_clipboard {
         let (reply, done) = channel();
         let _ = shared.worker.lock().unwrap().send(Command::ReplaceSelection { selection: rewrite.selection, text: text.clone(), reply });
         match done.recv_timeout(Duration::from_secs(2)).ok().flatten() {
             Some(true) => return true,
-            // the selection changed since the shortcut: pasting would land somewhere else
+            // another field has the focus, or the selection changed: pasting would land somewhere else
             None => return false,
             Some(false) => {}
         }
     }
-    keys::paste(&text)
+    let (reply, on_target) = channel();
+    let _ = shared.worker.lock().unwrap().send(Command::OnTarget { reply });
+    // pasting goes to the current selection: copying it again tells whether it moved
+    on_target.recv_timeout(Duration::from_secs(2)).unwrap_or(false)
+        && keys::copy_selection().as_deref() == Some(selected.as_str())
+        && keys::paste(&text)
 }
 
 // The overlay lets clicks through, except on the badge while the pointer is on it.
@@ -447,8 +562,13 @@ fn open_rewrite(app: AppHandle) {
     let _ = shared.worker.lock().unwrap().send(Command::Selection { reply });
     let found = selection.recv_timeout(Duration::from_secs(2)).ok().flatten();
     let cursor = platform::cursor();
+    // the field's text gives the model the rest of the sentence, as in the extension
+    let mut field = None;
     let (rewrite, rect) = match found {
-        Some((selection, rect)) => (Some(Rewrite { selection, via_clipboard: false }), rect),
+        Some((selection, rect, text)) => {
+            field = Some(json!({ "text": text, "start": selection.start }));
+            (Some(Rewrite { selection, via_clipboard: false }), rect)
+        }
         None => {
             // let go of the shortcut's modifiers first, or the app gets Cmd+Alt+C
             std::thread::sleep(Duration::from_millis(250));
@@ -461,9 +581,9 @@ fn open_rewrite(app: AppHandle) {
     ui.card_anchor = Some(rect.unwrap_or(Rect { x: cursor.0, y: cursor.1, width: 0.0, height: 18.0 }));
     ui.card_end = false;
     ui.rewrite = rewrite;
-    drop(ui);
+    ui.taken(&app);
     // the shortcut also offers the fixed text, for apps where underlining is off
-    let _ = app.emit_to("card", "card", json!({ "kind": "rewrite", "text": text, "fix": true }));
+    let _ = app.emit_to("card", "card", json!({ "kind": "rewrite", "text": text, "fix": true, "field": field }));
 }
 
 fn register_shortcut(app: &AppHandle, config: &Config) {
@@ -499,6 +619,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_config,
             save_config,
+            set_app,
+            card_epoch,
             set_marks,
             apply_fix,
             show_card,

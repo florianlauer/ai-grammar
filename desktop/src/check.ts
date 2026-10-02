@@ -1,7 +1,6 @@
 // The extension's grammar check and rewrites, without the DOM.
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { findFalseFriends } from "../../src/falseFriends.ts";
 import {
   formalityPrompt,
   formalitySchema,
@@ -12,7 +11,7 @@ import {
   type Tone,
 } from "../../src/prompts.ts";
 import type { Settings } from "../../src/settings.ts";
-import { keepUserText, keepVariants, languageOf, splitCheckable } from "../../src/contentScript/text.ts";
+import { keepUserText, languageOf, prepareRewrite, splitCheckable } from "../../src/contentScript/text.ts";
 import { generate } from "./api.ts";
 
 const corrected = z.object({ correctedText: z.string() });
@@ -36,19 +35,35 @@ export const check = async ({ text, settings, channel }: { text: string; setting
 export const tonesFor = (text: string) =>
   (Object.keys(tones) as Tone[]).filter((t) => t !== "natural" || languageOf(text) === "English");
 
-export const rewrite = async ({ text, tone, settings }: { text: string; tone: Tone; settings: Settings }) => {
-  const found = tone === "natural" ? findFalseFriends(text) : { language: null, notes: [] };
-  const writer = tone === "natural" ? { language: found.language, falseFriends: found.notes } : null;
+type Field = { text: string; start: number };
+
+// `field` is the text around the selection, when the app gives it, as the extension has it.
+const prepare = ({ text, tone, field }: { text: string; tone: Tone; field?: Field | null }) =>
+  prepareRewrite({ all: field?.text ?? text, start: field?.start ?? 0, text, tone });
+
+// Makes a fixed or rewritten selection fit back in its sentence, without its spaces around.
+export const fitSelection = ({ text, field }: { text: string; field?: Field | null }) =>
+  prepare({ text, tone: "clearer", field }).fit;
+
+export const rewrite = async ({
+  text,
+  tone,
+  settings,
+  field,
+}: {
+  text: string;
+  tone: Tone;
+  settings: Settings;
+  field?: Field | null;
+}) => {
+  const { request, falseFriends, keep } = prepare({ text, tone, field });
   const json = await generate({
     channel: "rewrite",
     model: settings.model,
-    prompt: rewritePrompt({ text, settings, tone, writer }),
+    prompt: rewritePrompt({ ...request, settings }),
     format: rewriteSchema,
   });
-  const kept = keepVariants(text, rewriteOutput.parse(json).variants, settings.dictionary);
-  // versions that still use a flagged word go last
-  const flagged = (v: string) => findFalseFriends(v).notes.length;
-  return { variants: tone === "natural" ? kept.sort((a, b) => flagged(a) - flagged(b)) : kept, notes: found.notes };
+  return { variants: keep(rewriteOutput.parse(json).variants, settings.dictionary), notes: falseFriends };
 };
 
 // How formal the text sounds, 1 to 5, on its own channel so it doesn't cancel the rewrite.

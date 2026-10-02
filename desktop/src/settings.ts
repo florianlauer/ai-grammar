@@ -10,16 +10,44 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 let config: Config = await getConfig();
 let running: App[] = [];
 
+// Sent one at a time, so an older value can't land last. The "config" events of the saves in
+// between are skipped; after the last one the settings show what is on disk, also when a save
+// failed.
+let saving: Promise<unknown> = Promise.resolve();
+let pending = 0;
+const queue = (send: () => Promise<unknown>) => {
+  pending++;
+  saving = saving
+    .then(send)
+    .catch((e) => console.error(e))
+    .then(async () => {
+      if (--pending === 0) {
+        const saved = await getConfig();
+        // a click while it was read is newer
+        if (pending === 0) {
+          config = saved;
+          render();
+        }
+      }
+    });
+};
+
+// applied here at once, so a second click before the "config" event builds on the first
+const save = (changes: Partial<Config>) => {
+  config = { ...config, ...changes };
+  queue(() => saveConfig(changes));
+};
+
+// the app lists change in Rust, one app at a time, so the card's "Turn off" can't be undone here
+const setApp = (target: App, listed: boolean, enabled: boolean) =>
+  queue(() => invoke("set_app", { target, listed, enabled }));
+
 const renderApps = () => {
   const apps = [...config.seenApps].sort((a, b) => a.name.localeCompare(b.name));
   $("apps").replaceChildren(
     ...apps.map((app) => {
       const box = Object.assign(document.createElement("input"), { type: "checkbox", checked: !config.disabledApps.includes(app.id) });
-      box.addEventListener("change", () =>
-        saveConfig({
-          disabledApps: box.checked ? config.disabledApps.filter((id) => id !== app.id) : [...config.disabledApps, app.id],
-        }),
-      );
+      box.addEventListener("change", () => setApp(app, true, box.checked));
       const label = Object.assign(document.createElement("label"), { className: "opt__check" });
       label.append(box, app.name || app.id);
       const id = Object.assign(document.createElement("span"), { className: "opt__meta", textContent: app.id });
@@ -30,12 +58,7 @@ const renderApps = () => {
         textContent: "Remove",
         ariaLabel: `Remove ${app.name || app.id}`,
       });
-      remove.addEventListener("click", () =>
-        saveConfig({
-          seenApps: config.seenApps.filter(({ id }) => id !== app.id),
-          disabledApps: config.disabledApps.filter((id) => id !== app.id),
-        }),
-      );
+      remove.addEventListener("click", () => setApp(app, false, true));
       const item = document.createElement("li");
       item.append(label, id, remove);
       return item;
@@ -65,15 +88,15 @@ const checkPermission = async () => {
   $("permission").hidden = await invoke<boolean>("permission", { prompt: false });
 };
 
-$("check").addEventListener("change", (e) => saveConfig({ checkAsYouType: (e.target as HTMLInputElement).checked }));
-$("shortcut-enabled").addEventListener("change", (e) => saveConfig({ shortcutEnabled: (e.target as HTMLInputElement).checked }));
+$("check").addEventListener("change", (e) => save({ checkAsYouType: (e.target as HTMLInputElement).checked }));
+$("shortcut-enabled").addEventListener("change", (e) => save({ shortcutEnabled: (e.target as HTMLInputElement).checked }));
 // accelerator syntax, e.g. CmdOrCtrl+Alt+G
-$("shortcut").addEventListener("change", (e) => saveConfig({ shortcut: (e.target as HTMLInputElement).value.trim() }));
+$("shortcut").addEventListener("change", (e) => save({ shortcut: (e.target as HTMLInputElement).value.trim() }));
 $("apps-form").addEventListener("submit", (e) => {
   e.preventDefault();
   const app = running.find(({ id }) => id === $<HTMLSelectElement>("running").value);
   if (app && !config.seenApps.some(({ id }) => id === app.id)) {
-    saveConfig({ seenApps: [...config.seenApps, app] });
+    setApp(app, true, true);
   }
 });
 $("grant").addEventListener("click", async () => {
@@ -82,8 +105,10 @@ $("grant").addEventListener("click", async () => {
 });
 
 onConfig((c) => {
-  config = c;
-  render();
+  if (pending === 0) {
+    config = c;
+    render();
+  }
 });
 render();
 loadRunning();
