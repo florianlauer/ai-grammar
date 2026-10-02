@@ -13,6 +13,6 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
     target: "es2022",
-    rollupOptions: { input: { index: page("index"), overlay: page("overlay"), card: page("card") } },
+    rolldownOptions: { input: { index: page("index"), overlay: page("overlay"), card: page("card") } },
   },
 });

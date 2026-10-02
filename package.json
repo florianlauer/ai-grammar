@@ -12,34 +12,29 @@
     "grammar"
   ],
   "engines": {
-    "node": ">=14.18.0"
+    "node": "^20.19.0 || >=22.12.0"
   },
   "scripts": {
     "build": "tsc && vite build",
     "fmt": "prettier --write '**/*.{tsx,ts,json,css,scss,md}'",
     "zip": "npm run build && node src/zip.js",
-    "test": "node --test 'src/**/*.test.ts'",
-    "postinstall": "patch-package"
+    "test": "node --test 'src/**/*.test.ts'"
   },
   "dependencies": {
-    "@floating-ui/dom": "^1.6.10",
-    "@types/diff": "^5.2.1",
-    "@types/dom-chromium-ai": "^0.0.9",
-    "diff": "^5.2.0",
-    "ollama": "^0.5.16",
-    "zod": "^3.25.76",
-    "zod-to-json-schema": "^3.24.6"
+    "@floating-ui/dom": "^1.8.0",
+    "@types/dom-chromium-ai": "^0.0.17",
+    "diff": "^9.0.0",
+    "ollama": "^0.6.4",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@crxjs/vite-plugin": "^2.0.0-beta.25",
-    "@tauri-apps/api": "^2.12.0",
-    "@types/chrome": "^0.0.246",
-    "@vitejs/plugin-react": "^4.1.0",
-    "gulp": "^4.0.2",
-    "gulp-zip": "^6.0.0",
-    "patch-package": "^8.0.0",
-    "prettier": "^3.0.3",
-    "typescript": "^5.2.2",
-    "vite": "^4.4.11"
+    "@crxjs/vite-plugin": "^3.0.0",
+    "@tauri-apps/api": "^2.12.1",
+    "@types/chrome": "^0.3.4",
+    "gulp": "^5.0.1",
+    "gulp-zip": "^6.1.0",
+    "prettier": "^3.9.9",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.2"
   }
 }

@@ -70,7 +70,7 @@ The Ollama path is tested on a MacBook Pro M2 Pro with 32 GB of RAM, in Arc. The
 
 ## Install the extension
 
-There are three ways. An agent can do it for you. The zip needs nothing but the browser. Building from source needs [git](https://git-scm.com) and [Node.js](https://nodejs.org) 18 or newer (the build is tested with Node 26), and is the way to go if you want to change the model or the code.
+There are three ways. An agent can do it for you. The zip needs nothing but the browser. Building from source needs [git](https://git-scm.com) and [Node.js](https://nodejs.org) 20.19 or newer (the build is tested with Node 26), and is the way to go if you want to change the model or the code.
 
 ### One line agent install
 
@@ -103,8 +103,6 @@ cd ai-grammar
 npm install
 npm run build
 ```
-
-`npm install` ends with `Failed to apply patch for package @types/dom-chromium-ai`. You can ignore it. That patch only touches type definitions and the build works without it.
 
 2. Open the extensions page of your browser and turn on "Developer mode", as in the zip steps above.
 3. Click "Load unpacked" and pick the `build` folder inside the repository.

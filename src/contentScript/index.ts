@@ -5,7 +5,6 @@ import type {
   ListResponse,
 } from "ollama/browser";
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 // crxjs lists imported CSS in the manifest, so the browser injects it and page CSPs can't block it
 import "./overlay.css";
 import {
@@ -50,7 +49,7 @@ const outputSchema = z.object({
   correctedText: z.string(),
 });
 
-const outputSchemaJson = zodToJsonSchema(outputSchema);
+const outputSchemaJson = z.toJSONSchema(outputSchema, { target: "draft-7" });
 
 const rewriteOutput = z.object({ variants: z.array(z.string()) });
 
@@ -290,9 +289,9 @@ class OllamaProvider implements Provider {
         options: { temperature: 0 },
         // keep the model loaded so the first check after a pause isn't slow
         keep_alive: -1,
-        // thinking would add seconds per check; not in this ollama-js version's types yet
+        // thinking would add seconds per check
         think: false,
-      } satisfies GenerateRequest & { think: boolean },
+      } satisfies GenerateRequest,
     });
 
     if (!response) {
@@ -301,7 +300,7 @@ class OllamaProvider implements Provider {
     if ("error" in response) {
       throw new Error(response.error);
     }
-    return JSON.parse(response.response);
+    return JSON.parse(response.response ?? "");
   }
 
   async fixGrammar(text: string, settings: Settings) {

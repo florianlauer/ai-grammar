@@ -1,5 +1,5 @@
 // Text logic with no DOM access, so it runs under `node --test`.
-import { diffWords } from "diff";
+import { diffWordsWithSpace } from "diff";
 import { findFalseFriends } from "../falseFriends.ts";
 import type { Tone } from "../prompts.ts";
 import type { Change } from "../settings";
@@ -15,7 +15,8 @@ export function diffSegments(from: string, to: string) {
   let pos = 0;
   let current: { hunk: Hunk; removed: string } | null = null;
 
-  for (const part of diffWords(from, to)) {
+  // diffWords glues spaces to words since diff v6, which merges neighbouring hunks
+  for (const part of diffWordsWithSpace(from, to)) {
     if (!part.added && !part.removed) {
       current = null;
       segments.push({ text: part.value });
