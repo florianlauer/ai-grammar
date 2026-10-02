@@ -29,20 +29,17 @@ import {
   tones,
   Writer,
 } from "../prompts";
-import { findFalseFriends } from "../falseFriends";
 import {
   changeOf,
   diffHunks,
   dictionaryCandidate,
   Hunk,
   keepUserText,
-  fitFragment,
-  isFragment,
   keepVariants,
   languageOf,
   longSentences,
   markedSpan,
-  sentenceAround,
+  prepareRewrite,
   splitCheckable,
   wholeWords,
   wordCount,
@@ -1364,27 +1361,9 @@ class Control {
     if (!this.#provider) {
       throw new Error("AI is not supported");
     }
-    const part = text.trim();
-    const lead = text.length - text.trimStart().length;
-    const context = sentenceAround(this.#text, start + lead, start + lead + part.length);
-    const fragment = isFragment(context);
-    // the whole field gives the writer's language away, even when the selection has no false friend
-    const falseFriends = tone === "natural" ? findFalseFriends(part).notes : [];
-    const writer = tone === "natural" ? { language: findFalseFriends(this.#text).language, falseFriends } : null;
-    const variants = await this.#provider.rewrite(
-      { text: part, context: fragment ? context : null, tone, writer },
-      settings,
-    );
-    // also for a whole sentence selected without its stop, which the text still has after it
-    const kept = keepVariants(
-      part,
-      variants.map((v) => fitFragment(v, { part, ...context })),
-      settings.dictionary,
-    );
-    // versions that still use a flagged word go last
-    const flagged = (v: string) => findFalseFriends(v).notes.length;
-    const sorted = tone === "natural" ? kept.sort((a, b) => flagged(a) - flagged(b)) : kept;
-    return { variants: sorted, notes: falseFriends };
+    const { request, falseFriends, keep } = prepareRewrite({ all: this.#text, start, text, tone });
+    const variants = await this.#provider.rewrite(request, settings);
+    return { variants: keep(variants, settings.dictionary), notes: falseFriends };
   };
 
   #applyRewrite = ({ start, end, text }: RewriteTarget, variant: string) => {

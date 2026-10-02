@@ -4,6 +4,7 @@ use super::{App, Rect};
 pub type Pid = u32;
 
 pub struct Platform;
+#[derive(Clone)]
 pub struct Field;
 
 impl Platform {
@@ -12,6 +13,9 @@ impl Platform {
     }
     pub fn frontmost(&mut self) -> Option<(App, Pid)> {
         None
+    }
+    pub fn same(&self, _a: &Field, _b: &Field) -> bool {
+        false
     }
     pub fn focused(&mut self, _pid: Pid) -> Option<Field> {
         None

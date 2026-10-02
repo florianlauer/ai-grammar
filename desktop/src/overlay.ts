@@ -21,6 +21,8 @@ import { check } from "./check.ts";
 
 type Tick = {
   app: App | null;
+  // the field `text` is from: a new one gets its own check even with the same text
+  id: number;
   text: string | null;
   field: Rect;
   // the rects of each range, one per line: the fixes, then the long sentences
@@ -48,6 +50,7 @@ let error = "";
 let run = 0;
 let timer: ReturnType<typeof setTimeout> | undefined;
 let app: App | null = null;
+let fieldId = -1;
 let field: Rect = { x: 0, y: 0, width: 0, height: 0 };
 let marks: Rect[][] = [];
 // what the pointer rests on and what the card shows: a range's index, PANEL for the badge, or NONE
@@ -106,25 +109,38 @@ const sendMarks = () => {
   }
 };
 
+// The rects belong to the ranges sent to Rust; when the ranges change, they're stale until the
+// next tick, and hovering them would open the wrong range.
+const forgetMarks = () => {
+  marks = [];
+  hovered = NONE;
+  clearTimeout(hoverTimer);
+};
+
 const showHunks = () => {
   if (text === null) {
     return;
   }
   hunks = result === null ? [] : diffHunks(text, result);
+  forgetMarks();
   sendMarks();
-  // hidden until the next tick draws them, so they replay their draw-in for the new result
-  for (const mark of layers.fix.children as HTMLCollectionOf<HTMLElement>) {
-    mark.style.display = "none";
-  }
   if (result !== null) {
     setBadge(hunks.length ? "wrong" : "correct", hunks.length ? `<span class="aig-count">${hunks.length}</span>` : checkIcon);
   }
 };
 
+// Numbers the overlay's show_card and hide_card, so Rust drops one that arrives after a newer one,
+// or after the card's own buttons or the shortcut took the card over (a new epoch).
+// from the clock, so the numbers keep growing when the page reloads
+let cardSeq = Date.now();
+let cardEpoch = 0;
+const showCard = (anchor: Rect, end: boolean, payload: object) =>
+  invoke("show_card", { anchor, end, payload, seq: ++cardSeq, epoch: cardEpoch });
+
 const hideCard = () => {
   if (shown !== NONE) {
     shown = NONE;
-    invoke("hide_card");
+    invoke("hide_card", { seq: ++cardSeq, epoch: cardEpoch });
   }
 };
 
@@ -132,29 +148,30 @@ const hideCard = () => {
 // for the whole text. The card window builds it.
 const openPanel = (current: string) => {
   const { before, core } = splitCheckable(current);
-  invoke("show_card", {
-    anchor: badge.getBoundingClientRect(),
-    end: true,
-    payload: {
-      kind: "panel",
-      state: badge.dataset.state,
-      error,
-      text: current,
-      result,
-      long: long.map(({ start, end }, i) => ({
-        start,
-        end,
-        text: current.slice(start, end),
-        anchor: union(marks[hunks.length + i] ?? []),
-      })),
-      whole: core.trim() ? { text: core, start: before.length, end: before.length + core.length, anchor: field } : null,
-      app,
-    },
+  showCard(badge.getBoundingClientRect(), true, {
+    kind: "panel",
+    field: fieldId,
+    state: badge.dataset.state,
+    error,
+    text: current,
+    result,
+    long: long.map(({ start, end }, i) => ({
+      start,
+      end,
+      text: current.slice(start, end),
+      anchor: union(marks[hunks.length + i] ?? []),
+    })),
+    whole: core.trim() ? { text: core, start: before.length, end: before.length + core.length, anchor: field } : null,
+    app,
   });
 };
 
 const open = (index: number, rect: Rect) => {
   if (text === null || index === shown) {
+    return;
+  }
+  // a hover timer from before the ranges changed can point past them
+  if (index !== PANEL && index >= hunks.length + long.length) {
     return;
   }
   shown = index;
@@ -163,17 +180,20 @@ const open = (index: number, rect: Rect) => {
   } else if (index < hunks.length) {
     const hunk = hunks[index];
     // under the line the pointer is on
-    invoke("show_card", {
-      anchor: rect,
-      end: false,
-      payload: { kind: "fix", index, removed: text.slice(hunk.start, hunk.end), added: hunk.replacement },
+    showCard(rect, false, {
+      kind: "fix",
+      text,
+      field: fieldId,
+      index,
+      removed: text.slice(hunk.start, hunk.end),
+      added: hunk.replacement,
     });
   } else {
     const { start, end } = long[index - hunks.length];
-    invoke("show_card", {
-      anchor: union(marks[index] ?? []),
-      end: false,
-      payload: { kind: "offer", sentence: { start, end, text: text.slice(start, end) } },
+    showCard(union(marks[index] ?? []), false, {
+      kind: "offer",
+      field: fieldId,
+      sentence: { start, end, text: text.slice(start, end) },
     });
   }
 };
@@ -186,6 +206,7 @@ const onText = (next: string) => {
   // same part of the text as the check: no underlines in an email signature
   const { before, core } = splitCheckable(next);
   long = longSentences(core).map((r) => ({ start: r.start + before.length, end: r.end + before.length }));
+  forgetMarks();
   if (next === expected && result !== null) {
     // a fix was just applied: the other fixes still hold, no new call
     expected = null;
@@ -245,6 +266,12 @@ const drawLayer = (layer: HTMLElement, groups: Rect[][], offset: number) => {
 };
 
 const draw = () => {
+  // until a tick brings the rects of the new ranges, the long sentences stay where they were
+  // drawn rather than flicker, and the old fixes go
+  if (marks.length !== hunks.length + long.length) {
+    drawLayer(layers.fix, [], 0);
+    return;
+  }
   drawLayer(layers.fix, marks.slice(0, hunks.length), 0);
   drawLayer(layers.rewrite, marks.slice(hunks.length), hunks.length);
   badge.toggleAttribute("data-hover", hovered === PANEL);
@@ -255,7 +282,8 @@ const hover = ({ cursor: [x, y], overCard }: Tick) => {
   // fixes come first, so they win over the long sentence around them
   let index = NONE;
   let rect = field;
-  marks.some((rects, i) => {
+  // the card covers the text under it: nothing there opens another card
+  (overCard ? [] : marks).some((rects, i) => {
     const hit = rects.find((r) => inside(r, x, y, 3));
     if (hit) {
       [index, rect] = [i, hit];
@@ -295,7 +323,7 @@ const acceptAll = async () => {
   // the whole text is replaced by the corrected one
   const before = text;
   expected = result;
-  const done = await invoke<boolean>("apply_fix", { start: 0, end: before.length, replacement: result, expected: before });
+  const done = await invoke<boolean>("apply_fix", { field: fieldId, start: 0, end: before.length, replacement: result, expected: before });
   if (!done) {
     expected = null;
   }
@@ -309,10 +337,11 @@ const accept = async (hunk: Hunk) => {
   const before = text;
   expected = before.slice(0, hunk.start) + hunk.replacement + before.slice(hunk.end);
   const done = await invoke<boolean>("apply_fix", {
+    field: fieldId,
     start: hunk.start,
     end: hunk.end,
     replacement: hunk.replacement,
-    expected: before.slice(hunk.start, hunk.end),
+    expected: before,
   });
   if (!done) {
     expected = null;
@@ -338,9 +367,14 @@ listen<Tick>("tick", ({ payload }) => {
     return;
   }
   field = payload.field;
+  const moved = payload.id !== fieldId;
+  fieldId = payload.id;
   // before the hover test, which reads where the badge is
   placeBadge(field);
-  if (payload.text !== text) {
+  if (moved) {
+    layers.rewrite.replaceChildren();
+  }
+  if (payload.text !== text || moved) {
     onText(payload.text);
   }
   // a tick measured before the new ranges reached Rust keeps the marks drawn
@@ -359,12 +393,26 @@ badge.addEventListener("click", () => {
 });
 
 // also sent by the card when it turns into a rewrite, which stays until it's used or closed
-listen("card-hidden", () => (shown = NONE));
+await listen<number>("card-hidden", ({ payload }) => {
+  shown = NONE;
+  cardEpoch = Math.max(cardEpoch, payload);
+  // a card opened under the pointer meanwhile was refused as stale: the next tick opens it again
+  hovered = NONE;
+  clearTimeout(hoverTimer);
+});
+// read after listening, so a takeover in between isn't missed: the page may be a reload after
+// the epoch moved on
+cardEpoch = Math.max(cardEpoch, await invoke<number>("card_epoch"));
 
-listen<{ index: number; action: "accept" | "ignore" | "word" | "accept-all"; word?: string }>(
+type FixAction = { text: string; field: number; index: number; action: "accept" | "ignore" | "word" | "accept-all"; word?: string };
+listen<FixAction>(
   "fix-action",
-  ({ payload: { index, action, word } }) => {
+  ({ payload: { text: shownText, field: shownField, index, action, word } }) => {
     shown = NONE;
+    // the card was built on another text or field: its index may point to another fix now
+    if (shownText !== text || shownField !== fieldId) {
+      return;
+    }
     const hunk = hunks[index];
     if (action === "accept-all") {
       acceptAll();

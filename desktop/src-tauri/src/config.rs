@@ -44,15 +44,31 @@ impl Default for Config {
 }
 
 impl Config {
+    // A file that doesn't parse is kept aside, so the defaults saved next don't replace it.
     pub fn load(path: &PathBuf) -> Config {
-        std::fs::read_to_string(path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+        // bytes, so a file that isn't UTF-8 counts as one that doesn't parse; one that can't be
+        // read at all is kept aside too
+        let parsed = match std::fs::read(path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Config::default(),
+            Err(e) => Err(e.to_string()),
+            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| e.to_string()),
+        };
+        parsed.unwrap_or_else(|e| {
+            let aside = path.with_extension("json.broken");
+            eprintln!("couldn't read the settings ({e}), kept as {}", aside.display());
+            let _ = std::fs::rename(path, aside);
+            Config::default()
+        })
     }
 
-    pub fn save(&self, path: &PathBuf) {
+    pub fn save(&self, path: &PathBuf) -> std::io::Result<()> {
         if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
+            std::fs::create_dir_all(dir)?;
         }
-        let _ = std::fs::write(path, serde_json::to_string_pretty(self).unwrap_or_default());
+        // through a temporary file, so a crash mid-write doesn't leave half a config
+        let temporary = path.with_extension("json.tmp");
+        std::fs::write(&temporary, serde_json::to_string_pretty(self).unwrap_or_default())?;
+        std::fs::rename(&temporary, path)
     }
 
     pub fn allows(&self, app: &App) -> bool {

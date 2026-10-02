@@ -17,6 +17,7 @@ pub struct Platform {
     automation: IUIAutomation,
 }
 
+#[derive(Clone)]
 pub struct Field {
     element: IUIAutomationElement,
     pattern: IUIAutomationTextPattern,
@@ -36,6 +37,10 @@ impl Platform {
         let mut pid = 0u32;
         unsafe { GetWindowThreadProcessId(GetForegroundWindow(), Some(&mut pid)) };
         Some((app_of(pid)?, pid))
+    }
+
+    pub fn same(&self, a: &Field, b: &Field) -> bool {
+        unsafe { self.automation.CompareElements(&a.element, &b.element) }.is_ok_and(|same| same.as_bool())
     }
 
     pub fn focused(&mut self, pid: Pid) -> Option<Field> {
@@ -91,13 +96,19 @@ unsafe fn rects_of(array: *mut SAFEARRAY) -> Vec<Rect> {
 
 impl Field {
     // UI Automation has no offsets: the range is built by moving its ends from the start of the text.
-    unsafe fn range(&self, start: usize, end: usize) -> Option<IUIAutomationTextRange> {
+    // Some providers count a UI Automation character as a code point or a grapheme, not a UTF-16
+    // unit, so after an emoji the range is shifted, and may still read the right text ("👍aa").
+    // None unless both the range and the text before it read what `text` has there.
+    unsafe fn range(&self, text: &str, start: usize, end: usize) -> Option<IUIAutomationTextRange> {
         let document = self.pattern.DocumentRange().ok()?;
         let range = document.Clone().ok()?;
         range.MoveEndpointByRange(TextPatternRangeEndpoint_End, &document, TextPatternRangeEndpoint_Start).ok()?;
         range.MoveEndpointByUnit(TextPatternRangeEndpoint_End, TextUnit_Character, end as i32).ok()?;
         range.MoveEndpointByUnit(TextPatternRangeEndpoint_Start, TextUnit_Character, start as i32).ok()?;
-        Some(range)
+        let head = document.Clone().ok()?;
+        head.MoveEndpointByRange(TextPatternRangeEndpoint_End, &range, TextPatternRangeEndpoint_Start).ok()?;
+        let reads = |r: &IUIAutomationTextRange| r.GetText(-1).ok().map(|t| wide(&t));
+        (reads(&head) == super::slice(text, 0, start) && reads(&range) == super::slice(text, start, end)).then_some(range)
     }
 
     pub fn text(&self) -> Option<String> {
@@ -113,11 +124,14 @@ impl Field {
         self.rects(start, end).into_iter().next()
     }
 
+    // No rect rather than one under the wrong text, after an emoji (see `range`).
     pub fn rects(&self, start: usize, end: usize) -> Vec<Rect> {
+        let Some(text) = self.text() else { return vec![] };
         unsafe {
-            match self.range(start, end).and_then(|r| r.GetBoundingRectangles().ok()) {
-                Some(array) => rects_of(array),
-                None => vec![],
+            let Some(range) = self.range(&text, start, end) else { return vec![] };
+            match range.GetBoundingRectangles() {
+                Ok(array) => rects_of(array),
+                Err(_) => vec![],
             }
         }
     }
@@ -141,11 +155,9 @@ impl Field {
     pub fn replace(&self, start: usize, end: usize, replacement: &str) -> bool {
         let Some(text) = self.text() else { return false };
         unsafe {
-            // Some providers count a UI Automation character as a code point or a grapheme, not a
-            // UTF-16 unit, so after an emoji the range is shifted. Only type over the right text.
-            if let Some(range) = self.range(start, end) {
-                let reads = range.GetText(-1).ok().map(|t| wide(&t));
-                if reads == super::slice(&text, start, end) && range.Select().is_ok() {
+            // only types over the right text, see `range`
+            if let Some(range) = self.range(&text, start, end) {
+                if range.Select().is_ok() {
                     return crate::keys::type_text(replacement);
                 }
             }
