@@ -338,10 +338,10 @@ const isTextArea = (
   );
 };
 
-// Set localStorage["ai-grammar:debug"] = "1" on a site to trace why a field is or isn't checked.
+// Set localStorage["prosed:debug"] = "1" on a site to trace why a field is or isn't checked.
 const debug = (...args: unknown[]) => {
-  if (localStorage.getItem("ai-grammar:debug")) {
-    console.log("[ai-grammar]", ...args);
+  if (localStorage.getItem("prosed:debug")) {
+    console.log("[prosed]", ...args);
   }
 };
 
@@ -1663,7 +1663,7 @@ class Control {
   #handleErrorClick = () => {
     window
       .open(
-        "https://github.com/florianlauer/ai-grammar#troubleshooting",
+        "https://github.com/florianlauer/prosed#troubleshooting",
         "_blank",
       )
       ?.focus();
