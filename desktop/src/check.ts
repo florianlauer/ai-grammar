@@ -1,6 +1,5 @@
 // The extension's grammar check and rewrites, without the DOM.
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import {
   formalityPrompt,
   formalitySchema,
@@ -15,7 +14,7 @@ import { keepUserText, languageOf, prepareRewrite, splitCheckable } from "../../
 import { generate } from "./api.ts";
 
 const corrected = z.object({ correctedText: z.string() });
-const correctedSchema = zodToJsonSchema(corrected);
+const correctedSchema = z.toJSONSchema(corrected, { target: "draft-7" });
 const rewriteOutput = z.object({ variants: z.array(z.string()) });
 const formalityOutput = z.object({ formality: z.number().int().min(1).max(5) });
 

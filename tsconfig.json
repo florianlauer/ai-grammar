@@ -5,8 +5,9 @@
     "lib": ["DOM", "DOM.Iterable", "ESNext"],
     "allowJs": false,
     "skipLibCheck": true,
-    "esModuleInterop": false,
     "allowSyntheticDefaultImports": true,
+    // TS 6+ no longer loads every @types package by default
+    "types": ["chrome", "dom-chromium-ai", "vite/client"],
     "strict": true,
     "forceConsistentCasingInFileNames": true,
     "module": "ESNext",

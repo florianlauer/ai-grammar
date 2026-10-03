@@ -9,7 +9,7 @@ export default defineConfig(({ mode }) => {
     build: {
       emptyOutDir: true,
       outDir: "build",
-      rollupOptions: {
+      rolldownOptions: {
         output: {
           chunkFileNames: "assets/chunk-[hash].js",
         },
