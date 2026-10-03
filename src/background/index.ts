@@ -56,7 +56,8 @@ const handlers: Handlers<keyof Messages> = {
       .then(() => ollama.generate({ model: to, prompt: "", keep_alive: -1 }))
       .then(() => ({ ok: true as const }), (e) => ({ error: String(e?.message ?? e) })),
 
-  "gemini.supported": () => LanguageModel.availability().then(() => true, () => false),
+  // it resolves "unavailable" rather than failing; a model still to download is fetched by the first check
+  "gemini.supported": () => LanguageModel.availability().then((a) => a !== "unavailable", () => false),
 
   "gemini.generate": async ({ channel, data }, sender) => {
     const signal = restart(sender, channel);
