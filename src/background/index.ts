@@ -1,8 +1,9 @@
 import ollama, { GenerateResponse, Ollama } from "ollama/browser";
+import type { Channel } from "../check";
+import type { Handlers, Message, Messages } from "../messages";
 
 // One per tab and kind of request, so a new check cancels the previous check in the same
 // tab but not a rewrite the user is waiting for, nor another tab's request.
-type Channel = "check" | "rewrite" | "meter";
 // ponytail: entries for closed tabs stay until the service worker stops, a few bytes each
 const controllers = new Map<string, AbortController>();
 
@@ -40,75 +41,44 @@ const ollamaGenerate = (
 
 chrome.action.onClicked.addListener(() => chrome.runtime.openOptionsPage());
 
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  // content scripts can't open the options page themselves
-  if (request.type === "options.open") {
-    chrome.runtime.openOptionsPage();
-    return;
-  }
+const handlers: Handlers<keyof Messages> = {
+  "options.open": async () => chrome.runtime.openOptionsPage(),
 
-  if (request.type === "ollama.list") {
-    ollama
-      .list()
-      .then((result) => sendResponse(result))
-      .catch(() => sendResponse(null));
-    return true;
-  }
+  "ollama.list": () => ollama.list().catch(() => null),
 
-  if (request.type === "ollama.generate") {
-    ollamaGenerate(request.data, restart(sender, request.channel))
-      .then((result) => sendResponse(result))
-      // e.g. "model not found" after picking a model that isn't pulled
-      .catch((e) => sendResponse({ error: String(e?.message ?? e) }));
+  "ollama.generate": ({ channel, data }, sender) =>
+    ollamaGenerate(data, restart(sender, channel)).catch((e) => ({ error: String(e?.message ?? e) })),
 
-    return true;
-  }
-
-  // Frees the previous model's memory, then loads the new one so the next check is fast.
   // The default client has no abort signal, so a check starting meanwhile can't cancel this.
-  if (request.type === "ollama.switch") {
-    const { from, to } = request.data as { from: string | null; to: string };
+  "ollama.switch": ({ data: { from, to } }) =>
     Promise.resolve(from && ollama.generate({ model: from, prompt: "", keep_alive: 0 }))
       .catch(() => {}) // not loaded or not installed: nothing to free
       .then(() => ollama.generate({ model: to, prompt: "", keep_alive: -1 }))
-      .then(() => sendResponse({ ok: true }))
-      .catch((e) => sendResponse({ error: String(e?.message ?? e) }));
-    return true;
-  }
+      .then(() => ({ ok: true as const }), (e) => ({ error: String(e?.message ?? e) })),
 
-  if (request.type === "gemini.supported") {
-    LanguageModel.availability()
-      .then(() => {
-        sendResponse(true);
-      })
-      .catch(() => {
-        sendResponse(false);
-      });
-    return true;
-  }
+  "gemini.supported": () => LanguageModel.availability().then(() => true, () => false),
 
-  if (request.type === "gemini.generate") {
-    const signal = restart(sender, request.channel);
-    LanguageModel.create({ signal }).then((session) => {
-      session
-        .prompt(request.data.text, {
-          signal,
-          ...request.data,
-        })
-        .then((data) => {
-          sendResponse(data);
-        })
-        .catch((e) => {
-          console.warn(e);
-          sendResponse(null);
-        });
-    })
-      // aborted or unavailable before a session exists: answer anyway, or the tab waits forever
-      .catch((e) => {
-        console.warn(e);
-        sendResponse(null);
-      });
+  "gemini.generate": async ({ channel, data }, sender) => {
+    const signal = restart(sender, channel);
+    try {
+      const session = await LanguageModel.create({ signal });
+      return await session.prompt(data.text, { signal, ...data });
+    } catch (e) {
+      // aborted, or unavailable before a session exists: answer anyway, or the tab waits forever
+      console.warn(e);
+      return null;
+    }
+  },
+};
 
-    return true;
+chrome.runtime.onMessage.addListener((request: Message, sender, sendResponse) => {
+  const handle = handlers[request.type] as
+    | ((request: Message, sender: chrome.runtime.MessageSender) => Promise<unknown>)
+    | undefined;
+  if (!handle) {
+    return;
   }
+  handle(request, sender).then(sendResponse);
+  // the answer comes later
+  return true;
 });

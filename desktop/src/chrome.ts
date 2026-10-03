@@ -2,6 +2,7 @@
 // src/settings.ts and the options page run unchanged. Imported first by every page.
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import type { Handlers, Message } from "../../src/messages.ts";
 import { version } from "../src-tauri/tauri.conf.json";
 import { getConfig, saveConfig } from "./api.ts";
 
@@ -12,22 +13,26 @@ listen("config", () => listeners.forEach((listener) => listener({}, "sync")));
 const load = (body: object) =>
   invoke("ollama_generate", { channel: "switch", body: { prompt: "", stream: false, ...body } });
 
-const sendMessage = async ({ type, data }: { type: string; data?: { from: string | null; to: string } }) => {
-  if (type === "ollama.list") {
-    return invoke<string[]>("ollama_models").then(
+// The options page's messages; the rest go to the extension's service worker only.
+const handlers: Handlers<"ollama.list" | "ollama.switch"> = {
+  "ollama.list": () =>
+    invoke<string[]>("ollama_models").then(
       (names) => ({ models: names.map((name) => ({ name })) }),
       () => null,
-    );
-  }
-  if (type === "ollama.switch" && data) {
+    ),
+  "ollama.switch": async ({ data: { from, to } }) => {
     // as in the extension: free the previous model, then load the new one
-    await (data.from ? load({ model: data.from, keep_alive: 0 }) : null)?.catch(() => {});
-    return load({ model: data.to, keep_alive: -1 }).then(
-      () => ({ ok: true }),
+    await (from ? load({ model: from, keep_alive: 0 }) : null)?.catch(() => {});
+    return load({ model: to, keep_alive: -1 }).then(
+      () => ({ ok: true as const }),
       (e) => ({ error: String(e) }),
     );
-  }
-  return null;
+  },
+};
+
+const sendMessage = async (message: Message) => {
+  const handle = handlers[message.type as keyof typeof handlers] as ((m: Message) => Promise<unknown>) | undefined;
+  return handle ? handle(message) : null;
 };
 
 globalThis.chrome = {

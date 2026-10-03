@@ -10,8 +10,8 @@ import { formalityLevels, tones, type Tone } from "../../src/prompts.ts";
 import { createDiff, rewriteIcon } from "../../src/contentScript/render.ts";
 import { diffHunks, dictionaryCandidate, wordCount } from "../../src/contentScript/text.ts";
 import { loadSettings } from "../../src/settings.ts";
-import { followTheme, getConfig, saveConfig, type App, type Rect } from "./api.ts";
-import { check, fitSelection, formality, rewrite, tonesFor } from "./check.ts";
+import { check, fitSelection, formality, rewrite, tonesFor } from "../../src/check.ts";
+import { followTheme, generate, getConfig, saveConfig, type App, type Rect } from "./api.ts";
 
 type Span = { text: string; start: number; end: number };
 type Panel = {
@@ -235,7 +235,7 @@ const showRewrite = async ({ text, tone: first = "clearer", fix = false, field }
     }
     update(body, [label("Rewriting…", true)]);
     try {
-      const { variants, notes } = await rewrite({ text, tone: t, settings, field });
+      const { variants, notes } = await rewrite({ text, tone: t, settings, field, generate });
       if (t !== tone) {
         return;
       }
@@ -262,7 +262,7 @@ const showRewrite = async ({ text, tone: first = "clearer", fix = false, field }
   if (fix) {
     // the fix first: Ollama answers one request at a time on small machines
     // checked alone, the selection gets a capital or a full stop it doesn't have in its sentence
-    const checked = await check({ text, settings, channel: "fix" }).catch(() => null);
+    const checked = await check({ text, settings, channel: "fix", generate }).catch(() => null);
     const result = checked && fitSelection({ text, field })(checked);
     if (result && result !== text.trim()) {
       update(fixed, [label("Fixed"), button("aig-card__apply", () => use(result), [result])]);
@@ -276,7 +276,7 @@ const showRewrite = async ({ text, tone: first = "clearer", fix = false, field }
   }
   const rewriting = pick(first);
   // sent after the rewrite, so an Ollama that runs one request at a time answers the rewrite first
-  formality({ text, settings }).then(
+  formality({ text, settings, generate }).then(
     (level) => {
       const dots = el(
         "span",
