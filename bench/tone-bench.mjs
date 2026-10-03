@@ -2,9 +2,9 @@
 // texts, and each tone preset against what it should change, after the extension's checks.
 // Usage: node bench/tone-bench.mjs model1 model2 ...
 import { writeFileSync } from "node:fs";
-import { keepVariants, wordCount } from "../src/contentScript/text.ts";
+import { formality as meter, rewrite } from "../src/check.ts";
+import { wordCount } from "../src/contentScript/text.ts";
 import { findFalseFriends } from "../src/falseFriends.ts";
-import { formalityPrompt, formalitySchema, rewritePrompt, rewriteSchema } from "../src/prompts.ts";
 import { defaultSettings } from "../src/settings.ts";
 
 const OLLAMA = "http://127.0.0.1:11434";
@@ -52,15 +52,17 @@ const correctTexts = [
 const hedges = /\b(I think|maybe|probably|just|perhaps|seems?|peut-être|je pense|juste|par hasard|il me semble)\b/gi;
 const hedgeCount = (t) => t.match(hedges)?.length ?? 0;
 
-const generate = async (model, prompt, format) => {
-  const body = { model, prompt, format, stream: false, think: false, options: { temperature: 0 } };
+// src/check.ts's Generate, over HTTP
+const generate = async ({ model, prompt, schema }) => {
+  const body = { model, prompt, format: schema, stream: false, think: false, options: { temperature: 0 } };
   const res = await fetch(`${OLLAMA}/api/generate`, { method: "POST", body: JSON.stringify(body) });
   const json = await res.json();
   if (json.error) throw new Error(json.error);
   return JSON.parse(json.response);
 };
 
-const formality = async (model, text) => (await generate(model, formalityPrompt(text), formalitySchema)).formality;
+const settingsFor = (model) => ({ ...defaultSettings, model });
+const formality = (model, text) => meter({ text, settings: settingsFor(model), generate });
 
 // What each preset has to change for a kept variant to count, beyond the extension's checks.
 const goals = {
@@ -101,12 +103,9 @@ for (const model of process.argv.slice(2)) {
     let kept = 0;
     let reached = 0;
     for (const text of goal.texts ?? (tone === "natural" ? naturalTexts : texts)) {
-      // what the extension sends: the writer's language comes from the text
-      const found = findFalseFriends(text);
-      const writer = tone === "natural" ? { language: found.language, falseFriends: found.notes } : null;
-      const prompt = rewritePrompt({ text, settings: defaultSettings, tone, writer });
-      const { variants } = await generate(model, prompt, rewriteSchema);
-      for (const v of keepVariants(text, variants)) {
+      // the variants the card would show
+      const { variants } = await rewrite({ text, tone, settings: settingsFor(model), generate });
+      for (const v of variants) {
         kept++;
         const ok = await goal.test(model, v, text);
         if (ok) reached++;

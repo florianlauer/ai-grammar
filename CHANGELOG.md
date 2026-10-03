@@ -4,6 +4,8 @@
 
 - feat: desktop app for macOS and Windows in `desktop/`: underlines mistakes in the focused field of any app, and rewrites the selection with a shortcut (off by default). Each app can be turned off in its settings
 - docs: `desktop/LINUX.md`, what a Linux version could do on X11 and on Wayland
+- fix: without Ollama, a Chrome that can't run Gemini Nano now says "AI is not supported" instead of "Make sure that Gemini is working"
+- refactor: the extension, the desktop app and the benchmarks share one grammar check (`src/check.ts`) and one as-you-type check loop (`src/session.ts`). The grammar and tone benchmarks now grade what the user sees, after the same filters
 
 ## 0.10.0 [2026.09.29]
 

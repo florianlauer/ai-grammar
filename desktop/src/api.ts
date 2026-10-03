@@ -1,6 +1,7 @@
 // The Rust side: settings, Ollama, and the focused field of the app being typed in.
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import type { Generate } from "../../src/check.ts";
 import type { Settings } from "../../src/settings.ts";
 
 export type App = { id: string; name: string };
@@ -37,20 +38,10 @@ export const followTheme = () => {
 
 // The extension's Ollama request, sent from Rust. A new request on a channel cancels the
 // previous one there.
-export const generate = async ({
-  channel,
-  model,
-  prompt,
-  format,
-}: {
-  channel: string;
-  model: string;
-  prompt: string;
-  format: object;
-}) => {
+export const generate: Generate = async ({ channel, model, prompt, schema }) => {
   const { response } = await invoke<{ response: string }>("ollama_generate", {
     channel,
-    body: { model, prompt, format, stream: false, think: false, keep_alive: -1, options: { temperature: 0 } },
+    body: { model, prompt, format: schema, stream: false, think: false, keep_alive: -1, options: { temperature: 0 } },
   });
   return JSON.parse(response);
 };

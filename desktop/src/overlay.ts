@@ -6,18 +6,10 @@ import "./overlay.css";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { checkIcon, powerIcon, spinnerIcon } from "../../src/contentScript/render.ts";
-import {
-  changeOf,
-  diffHunks,
-  keepUserText,
-  longSentences,
-  markedSpan,
-  splitCheckable,
-  type Hunk,
-} from "../../src/contentScript/text.ts";
+import { changeOf, markedSpan, splitCheckable, type Hunk } from "../../src/contentScript/text.ts";
 import { addToDictionary, ignoreChange, loadSettings, onSettingsChange } from "../../src/settings.ts";
-import { followTheme, type App, type Rect } from "./api.ts";
-import { check } from "./check.ts";
+import { CheckSession } from "../../src/session.ts";
+import { followTheme, generate, type App, type Rect } from "./api.ts";
 
 type Tick = {
   app: App | null;
@@ -30,25 +22,16 @@ type Tick = {
   cursor: [number, number];
   overCard: boolean;
 };
-type Span = { start: number; end: number };
-
 const layers = { fix: document.getElementById("fixes")!, rewrite: document.getElementById("long")! };
 const badge = document.getElementById("badge") as HTMLButtonElement;
 followTheme();
 
 let settings = await loadSettings();
 
+// the focused field's text, null when there's none
 let text: string | null = null;
-// the corrected text from the last check, and the fixes still left in `text`
-let result: string | null = null;
-let hunks: Hunk[] = [];
-// sentences over 30 words, underlined for a rewrite as in the extension
-let long: Span[] = [];
 // the text an applied fix leads to, so it doesn't start a new check
 let expected: string | null = null;
-let error = "";
-let run = 0;
-let timer: ReturnType<typeof setTimeout> | undefined;
 let app: App | null = null;
 let fieldId = -1;
 let field: Rect = { x: 0, y: 0, width: 0, height: 0 };
@@ -104,7 +87,7 @@ const setClickable = (on: boolean) => {
 
 const sendMarks = () => {
   if (text !== null) {
-    const ranges = [...hunks.map((hunk) => markedSpan(text!, hunk)), ...long.map(({ start, end }) => [start, end])];
+    const ranges = [...session.hunks.map((hunk) => markedSpan(text!, hunk)), ...session.long.map(({ start, end }) => [start, end])];
     invoke("set_marks", { text, ranges });
   }
 };
@@ -117,17 +100,28 @@ const forgetMarks = () => {
   clearTimeout(hoverTimer);
 };
 
-const showHunks = () => {
+// The fixes and long sentences changed: the marks Rust measures and the badge follow.
+const render = () => {
   if (text === null) {
     return;
   }
-  hunks = result === null ? [] : diffHunks(text, result);
   forgetMarks();
   sendMarks();
-  if (result !== null) {
-    setBadge(hunks.length ? "wrong" : "correct", hunks.length ? `<span class="aig-count">${hunks.length}</span>` : checkIcon);
+  const state = session.state;
+  if (state.type === "empty") {
+    setBadge("hidden");
+  } else if (state.type === "loading") {
+    setBadge("loading", spinnerIcon);
+  } else if (state.type === "error") {
+    console.warn(state.error);
+    setBadge("error", powerIcon);
+  } else {
+    const count = state.hunks.length;
+    setBadge(count ? "wrong" : "correct", count ? `<span class="aig-count">${count}</span>` : checkIcon);
   }
 };
+
+const session = new CheckSession({ generate, settings: () => settings, pause: 800, onChange: render });
 
 // Numbers the overlay's show_card and hide_card, so Rust drops one that arrives after a newer one,
 // or after the card's own buttons or the shortcut took the card over (a new epoch).
@@ -152,14 +146,14 @@ const openPanel = (current: string) => {
     kind: "panel",
     field: fieldId,
     state: badge.dataset.state,
-    error,
+    error: session.state.type === "error" ? String(session.state.error) : "",
     text: current,
-    result,
-    long: long.map(({ start, end }, i) => ({
+    result: session.result,
+    long: session.long.map(({ start, end }, i) => ({
       start,
       end,
       text: current.slice(start, end),
-      anchor: union(marks[hunks.length + i] ?? []),
+      anchor: union(marks[session.hunks.length + i] ?? []),
     })),
     whole: core.trim() ? { text: core, start: before.length, end: before.length + core.length, anchor: field } : null,
     app,
@@ -171,14 +165,14 @@ const open = (index: number, rect: Rect) => {
     return;
   }
   // a hover timer from before the ranges changed can point past them
-  if (index !== PANEL && index >= hunks.length + long.length) {
+  if (index !== PANEL && index >= session.hunks.length + session.long.length) {
     return;
   }
   shown = index;
   if (index === PANEL) {
     openPanel(text);
-  } else if (index < hunks.length) {
-    const hunk = hunks[index];
+  } else if (index < session.hunks.length) {
+    const hunk = session.hunks[index];
     // under the line the pointer is on
     showCard(rect, false, {
       kind: "fix",
@@ -189,7 +183,7 @@ const open = (index: number, rect: Rect) => {
       added: hunk.replacement,
     });
   } else {
-    const { start, end } = long[index - hunks.length];
+    const { start, end } = session.long[index - session.hunks.length];
     showCard(union(marks[index] ?? []), false, {
       kind: "offer",
       field: fieldId,
@@ -200,51 +194,11 @@ const open = (index: number, rect: Rect) => {
 
 const onText = (next: string) => {
   text = next;
-  run++;
-  clearTimeout(timer);
   hideCard();
-  // same part of the text as the check: no underlines in an email signature
-  const { before, core } = splitCheckable(next);
-  long = longSentences(core).map((r) => ({ start: r.start + before.length, end: r.end + before.length }));
-  forgetMarks();
-  if (next === expected && result !== null) {
-    // a fix was just applied: the other fixes still hold, no new call
-    expected = null;
-    showHunks();
-    return;
-  }
+  // a fix was just applied: the other fixes still hold, no new call
+  const keep = next === expected;
   expected = null;
-  result = null;
-  hunks = [];
-  sendMarks();
-  // rarely works with single words
-  if (core.split(/\s+/).length < 2) {
-    setBadge("hidden");
-    return;
-  }
-  setBadge("loading", spinnerIcon);
-  const current = run;
-  // wait for a typing pause instead of querying the model on every keystroke
-  timer = setTimeout(async () => {
-    try {
-      const fixed = await check({ text: next, settings, channel: "check" });
-      if (current !== run) {
-        return;
-      }
-      if (fixed === null) {
-        setBadge("hidden");
-        return;
-      }
-      result = fixed;
-      showHunks();
-    } catch (e) {
-      if (current === run && String(e) !== "aborted") {
-        console.warn(e);
-        error = String(e);
-        setBadge("error", powerIcon);
-      }
-    }
-  }, 800);
+  session.edit(next, { keep });
 };
 
 // Reuses the mark elements from tick to tick, so they only draw in when they're new.
@@ -268,12 +222,13 @@ const drawLayer = (layer: HTMLElement, groups: Rect[][], offset: number) => {
 const draw = () => {
   // until a tick brings the rects of the new ranges, the long sentences stay where they were
   // drawn rather than flicker, and the old fixes go
-  if (marks.length !== hunks.length + long.length) {
+  const fixes = session.hunks.length;
+  if (marks.length !== fixes + session.long.length) {
     drawLayer(layers.fix, [], 0);
     return;
   }
-  drawLayer(layers.fix, marks.slice(0, hunks.length), 0);
-  drawLayer(layers.rewrite, marks.slice(hunks.length), hunks.length);
+  drawLayer(layers.fix, marks.slice(0, fixes), 0);
+  drawLayer(layers.rewrite, marks.slice(fixes), fixes);
   badge.toggleAttribute("data-hover", hovered === PANEL);
 };
 
@@ -317,6 +272,7 @@ const hover = ({ cursor: [x, y], overCard }: Tick) => {
 };
 
 const acceptAll = async () => {
+  const result = session.result;
   if (text === null || result === null || result === text) {
     return;
   }
@@ -352,8 +308,7 @@ listen<Tick>("tick", ({ payload }) => {
   app = payload.app;
   if (payload.text === null) {
     text = null;
-    run++;
-    clearTimeout(timer);
+    session.stop();
     clearTimeout(hoverTimer);
     clearTimeout(hideTimer);
     hideTimer = undefined;
@@ -378,7 +333,7 @@ listen<Tick>("tick", ({ payload }) => {
     onText(payload.text);
   }
   // a tick measured before the new ranges reached Rust keeps the marks drawn
-  if (payload.marks.length === hunks.length + long.length) {
+  if (payload.marks.length === session.hunks.length + session.long.length) {
     marks = payload.marks;
   }
   hover(payload);
@@ -413,7 +368,7 @@ listen<FixAction>(
     if (shownText !== text || shownField !== fieldId) {
       return;
     }
-    const hunk = hunks[index];
+    const hunk = session.hunks[index];
     if (action === "accept-all") {
       acceptAll();
     } else if (action === "word" && word) {
@@ -433,11 +388,7 @@ listen<FixAction>(
 // Drops fixes on words just added to the dictionary or changes just ignored, without a new check.
 onSettingsChange((next) => {
   settings = next;
-  if (text !== null && result !== null) {
-    const kept = keepUserText(text, result, settings.dictionary, settings.ignored);
-    if (kept !== result) {
-      result = kept;
-      showHunks();
-    }
+  if (text !== null) {
+    session.refresh();
   }
 });

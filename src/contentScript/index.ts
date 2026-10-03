@@ -1,10 +1,4 @@
 import { computePosition, flip, offset, Rect, shift } from "@floating-ui/dom";
-import type {
-  GenerateResponse,
-  GenerateRequest,
-  ListResponse,
-} from "ollama/browser";
-import { z } from "zod";
 // crxjs lists imported CSS in the manifest, so the browser injects it and page CSPs can't block it
 import "./overlay.css";
 import {
@@ -16,73 +10,26 @@ import {
   Settings,
   defaultSettings,
 } from "../settings";
-import {
-  formalityLevels,
-  formalityPrompt,
-  formalitySchema,
-  grammarPrompt,
-  RewriteContext,
-  rewritePrompt,
-  rewriteSchema,
-  Tone,
-  tones,
-  Writer,
-} from "../prompts";
+import { formalityLevels, Tone, tones } from "../prompts";
+import { formality, rewrite, tonesFor, type Generate, type Rewrite } from "../check";
+import { send } from "../messages";
+import { CheckSession } from "../session";
 import {
   changeOf,
-  diffHunks,
   dictionaryCandidate,
   Hunk,
-  keepUserText,
-  keepVariants,
-  languageOf,
-  longSentences,
   markedSpan,
-  prepareRewrite,
   splitCheckable,
   wholeWords,
   wordCount,
 } from "./text";
 import { checkIcon, createDiff, powerIcon, rewriteIcon, spinnerIcon } from "./render";
 
-const outputSchema = z.object({
-  correctedText: z.string(),
-});
-
-const outputSchemaJson = z.toJSONSchema(outputSchema, { target: "draft-7" });
-
-const rewriteOutput = z.object({ variants: z.array(z.string()) });
-
-const formalityOutput = z.object({ formality: z.number().int().min(1).max(5) });
-
-type RewriteRequest = {
-  text: string;
-  context: RewriteContext | null;
-  tone: Tone;
-  writer: Writer | null;
-};
-
-// Variants that passed the checks, and notes to show under them.
-type RewriteResult = { variants: string[]; notes: string[] };
-
-// "More natural" is for English written as a second language.
-const tonesFor = (text: string) =>
-  (Object.keys(tones) as Tone[]).filter((t) => t !== "natural" || languageOf(text) === "English");
-
 // Kept current by main(); read at event time so changes in the options page apply at once.
 let settings: Settings = defaultSettings;
 
 const buttonSize = 24;
 const buttonPadding = 8;
-
-type Result<T> = { ok: true; value: T } | { ok: false; error: unknown };
-
-const resultFromPromise = <T>(promise: Promise<T>): Promise<Result<T>> => {
-  return promise.then(
-    (value) => ({ ok: true, value }),
-    (error) => ({ ok: false, error }),
-  );
-};
 
 const isVisible = (el: HTMLElement, parent: HTMLElement) => {
   const rect = el.getBoundingClientRect();
@@ -201,70 +148,39 @@ const replaceText = (
   el.dispatchEvent(new Event("input", { bubbles: true }));
 };
 
-// Each channel has its own abort controller in the service worker.
-type Channel = "check" | "rewrite" | "meter";
+// A model backend, reached through the service worker, which keeps an abort controller per channel.
+type Provider = { name: string; isSupported: () => Promise<boolean>; generate: Generate };
 
-interface Provider {
-  isSupported: () => Promise<boolean>;
-  fixGrammar: (text: string, settings: Settings) => Promise<string>;
-  // raw variants, before the checks in keepVariants
-  rewrite: (request: RewriteRequest, settings: Settings) => Promise<string[]>;
-  // 1 (very casual) to 5 (very formal)
-  formality: (text: string, settings: Settings) => Promise<number>;
-}
-
-class GeminiProvider implements Provider {
+const gemini: Provider = {
+  name: "chrome built-in",
   async isSupported() {
     try {
-      const result: boolean = await chrome.runtime.sendMessage({
-        type: "gemini.supported",
-      });
-
-      return result;
+      return await send({ type: "gemini.supported" });
     } catch (e) {
       console.warn(e);
       return false;
     }
-  }
+  },
 
-  async #generate(channel: Channel, prompt: string, schema: Record<string, unknown>) {
-    const response: string | null = await chrome.runtime.sendMessage({
+  async generate({ channel, prompt, schema }) {
+    const response = await send({
       type: "gemini.generate",
       channel,
-      data: {
-        text: prompt,
-        responseConstraint: schema,
-      } satisfies LanguageModelPromptOptions & { text: LanguageModelPrompt },
+      data: { text: prompt, responseConstraint: schema },
     });
 
     if (!response) {
       throw new Error("Make sure that Gemini is working");
     }
     return JSON.parse(response);
-  }
+  },
+};
 
-  async fixGrammar(text: string, settings: Settings) {
-    const json = await this.#generate("check", grammarPrompt(text, settings), outputSchemaJson);
-    return outputSchema.parse(json).correctedText;
-  }
-
-  async rewrite(request: RewriteRequest, settings: Settings) {
-    const json = await this.#generate("rewrite", rewritePrompt({ ...request, settings }), rewriteSchema);
-    return rewriteOutput.parse(json).variants;
-  }
-
-  async formality(text: string) {
-    const json = await this.#generate("meter", formalityPrompt(text), formalitySchema);
-    return formalityOutput.parse(json).formality;
-  }
-}
-
-class OllamaProvider implements Provider {
+const ollama: Provider = {
+  name: "ollama",
   async isSupported() {
     try {
-      const result: ListResponse | null = await chrome.runtime.sendMessage({
-        type: "ollama.list",
-      });
+      const result = await send({ type: "ollama.list" });
 
       if (!result) {
         return false;
@@ -275,23 +191,22 @@ class OllamaProvider implements Provider {
       console.warn(e);
       return false;
     }
-  }
+  },
 
-  async #generate(channel: Channel, model: string, prompt: string, format: object) {
-    const response: GenerateResponse | { error: string } | null =
-      await chrome.runtime.sendMessage({
+  async generate({ channel, model, prompt, schema }) {
+    const response = await send({
       type: "ollama.generate",
       channel,
       data: {
         model,
         prompt,
-        format,
+        format: schema,
         options: { temperature: 0 },
         // keep the model loaded so the first check after a pause isn't slow
         keep_alive: -1,
         // thinking would add seconds per check
         think: false,
-      } satisfies GenerateRequest,
+      },
     });
 
     if (!response) {
@@ -301,28 +216,8 @@ class OllamaProvider implements Provider {
       throw new Error(response.error);
     }
     return JSON.parse(response.response ?? "");
-  }
-
-  async fixGrammar(text: string, settings: Settings) {
-    const json = await this.#generate("check", settings.model, grammarPrompt(text, settings), outputSchemaJson);
-    return outputSchema.parse(json).correctedText;
-  }
-
-  async rewrite(request: RewriteRequest, settings: Settings) {
-    const json = await this.#generate(
-      "rewrite",
-      settings.model,
-      rewritePrompt({ ...request, settings }),
-      rewriteSchema,
-    );
-    return rewriteOutput.parse(json).variants;
-  }
-
-  async formality(text: string, settings: Settings) {
-    const json = await this.#generate("meter", settings.model, formalityPrompt(text), formalitySchema);
-    return formalityOutput.parse(json).formality;
-  }
-}
+  },
+};
 
 // These sites turn native spell checking off because they ship their own checker,
 // so spellcheck="false" there doesn't mean "not prose".
@@ -426,7 +321,7 @@ class Tooltip {
     settingsLink.className = "aig-link";
     settingsLink.textContent = "Settings";
     settingsLink.addEventListener("click", () =>
-      chrome.runtime.sendMessage({ type: "options.open" }),
+      send({ type: "options.open" }),
     );
     const siteOff = document.createElement("button");
     siteOff.type = "button";
@@ -859,7 +754,7 @@ class RewriteCard {
   #hideTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(
-    private rewrite: (target: RewriteTarget, tone: Tone) => Promise<RewriteResult>,
+    private rewrite: (target: RewriteTarget, tone: Tone) => Promise<Rewrite>,
     private onApply: (target: RewriteTarget, variant: string) => void,
     private formality: (text: string) => Promise<number>,
   ) {
@@ -938,7 +833,7 @@ class RewriteCard {
     if (meter) {
       this.#measure(target.text, meter, this.#session);
     }
-    let result: RewriteResult;
+    let result: Rewrite;
     try {
       result = await rewriting;
     } catch (e) {
@@ -1104,8 +999,7 @@ class Control {
   #button: HTMLButtonElement;
   #tooltip: Tooltip;
 
-  #text: string = "";
-  #result: string = "";
+  #session: CheckSession;
   #provider: Provider | null;
   #updateInterval: ReturnType<typeof setInterval> | null = null;
   #isVisible: boolean = false;
@@ -1116,8 +1010,6 @@ class Control {
   #card: SuggestionCard;
   #glyph: string = "";
   #textObserver: MutationObserver | null = null;
-  // bumped on every update, so a slower, older check can tell it was superseded
-  #run = 0;
   // sentences over 30 words, underlined in the rewrite colour
   #long: Underlines;
   #longRanges: { start: number; end: number }[] = [];
@@ -1131,6 +1023,12 @@ class Control {
     provider: Provider | null,
   ) {
     this.#provider = provider;
+    this.#session = new CheckSession({
+      generate: provider?.generate ?? null,
+      settings: () => settings,
+      pause: 500,
+      onChange: () => this.#render(),
+    });
     this.#underlines = new Underlines(textArea);
     this.#card = new SuggestionCard(
       (hunk) => this.#applyHunks([hunk]),
@@ -1141,7 +1039,7 @@ class Control {
     this.#long = new Underlines(textArea, "rewrite");
     this.#rewriteCard = new RewriteCard(this.#rewrite, this.#applyRewrite, (text) =>
       this.#provider
-        ? this.#provider.formality(text.trim(), settings)
+        ? formality({ text, settings, generate: this.#provider.generate })
         : Promise.reject(new Error("AI is not supported")),
     );
     this.#rewriteButton = document.createElement("button");
@@ -1356,13 +1254,11 @@ class Control {
     return wordCount(text) >= 2 ? { start, end, text } : null;
   }
 
-  #rewrite = async ({ start, end, text }: RewriteTarget, tone: Tone): Promise<RewriteResult> => {
+  #rewrite = async ({ start, end, text }: RewriteTarget, tone: Tone): Promise<Rewrite> => {
     if (!this.#provider) {
       throw new Error("AI is not supported");
     }
-    const { request, falseFriends, keep } = prepareRewrite({ all: this.#text, start, text, tone });
-    const variants = await this.#provider.rewrite(request, settings);
-    return { variants: keep(variants, settings.dictionary), notes: falseFriends };
+    return rewrite({ text, tone, settings, field: { text: this.#text, start }, generate: this.#provider.generate });
   };
 
   #applyRewrite = ({ start, end, text }: RewriteTarget, variant: string) => {
@@ -1378,11 +1274,7 @@ class Control {
   };
 
   #setLong() {
-    // same part of the text as the check: no underlines in an email signature
-    const { before, core } = splitCheckable(this.#text);
-    const ranges = this.#provider
-      ? longSentences(core).map((r) => ({ start: r.start + before.length, end: r.end + before.length }))
-      : [];
+    const ranges = this.#session.long;
     const changed = JSON.stringify(ranges) !== JSON.stringify(this.#longRanges);
     this.#longRanges = ranges;
     this.#long.set(
@@ -1524,102 +1416,65 @@ class Control {
       : this.textArea.innerText;
   }
 
-  public async update() {
+  public update() {
     // our own edits fire input events; the result is still valid, no need to re-query
     if (this.#applying) {
       return;
     }
 
-    const text = this.#readText();
-    const run = ++this.#run;
-
-    this.#text = text;
     this.#rewriteCard.hide();
     this.#hideRewriteButton();
-    this.#setLong();
-
+    this.#session.edit(this.#readText());
     this.updatePosition();
-
-    if (!this.#provider) {
-      this.#setState({
-        type: "error",
-        text: "AI is not supported. Please enable it in your browser settings.",
-      });
-      return;
-    }
-
-    const { before, core, after } = splitCheckable(text);
-
-    // rarely works with single words
-    if (core.split(/\s+/).length < 2) {
-      this.#setState({ type: "empty" });
-      return;
-    }
-
-    this.#setState({ type: "loading" });
-
-    // wait for a typing pause instead of querying the model on every keystroke
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    if (run !== this.#run || this.#text !== text) {
-      return;
-    }
-
-    const result = await resultFromPromise(this.#provider.fixGrammar(core, settings));
-
-    if (run !== this.#run || this.#text !== text) {
-      return;
-    }
-
-    if (!result.ok) {
-      const error = result.error as any;
-      console.warn(error);
-      // the extension was reloaded or updated after this tab loaded; this script is orphaned
-      if (!chrome.runtime?.id) {
-        this.#setState({
-          type: "error",
-          text: "The extension was updated. Reload this page to check your text again.",
-        });
-        return;
-      }
-      const message = error?.message ?? error?.toString();
-      this.#setState({
-        type: "error",
-        text:
-          "Something went wrong. Please try again." +
-          (message ? ` (${message})` : ""),
-      });
-      return;
-    }
-
-    this.#result =
-      before + keepUserText(core, result.value.trim(), settings.dictionary, settings.ignored) + after;
-    this.#showResult();
   }
 
-  #showResult() {
-    if (this.#isCorrect) {
-      this.#setState({ type: "correct" });
-    } else {
-      const hunks = diffHunks(this.#text, this.#result);
-      this.#setState({
-        type: "wrong",
-        text: createDiff(this.#text, this.#result, (hunk) =>
-          this.#applyHunks([hunk]),
-        ),
-        count: hunks.length,
-      });
-      this.#card.hide();
-      this.#underlines.set(this.#text, hunks);
+  get #text() {
+    return this.#session.text;
+  }
+
+  #render() {
+    this.#setLong();
+    const state = this.#session.state;
+    switch (state.type) {
+      case "empty":
+      case "loading":
+        this.#setState(state);
+        return;
+      case "error":
+        this.#setState({ type: "error", text: this.#errorText(state.error) });
+        return;
+      case "done":
+        if (!state.hunks.length) {
+          this.#setState({ type: "correct" });
+          return;
+        }
+        this.#setState({
+          type: "wrong",
+          text: createDiff(this.#text, state.result, (hunk) => this.#applyHunks([hunk])),
+          count: state.hunks.length,
+        });
+        this.#card.hide();
+        this.#underlines.set(this.#text, state.hunks);
     }
+  }
+
+  #errorText(error: any) {
+    if (!this.#provider) {
+      return "AI is not supported. Please enable it in your browser settings.";
+    }
+    console.warn(error);
+    // the extension was reloaded or updated after this tab loaded; this script is orphaned
+    if (!chrome.runtime?.id) {
+      return "The extension was updated. Reload this page to check your text again.";
+    }
+    const message = error?.message ?? error?.toString();
+    return "Something went wrong. Please try again." + (message ? ` (${message})` : "");
   }
 
   // Drops suggestions on words just added to the dictionary or on changes just ignored,
   // without a new model call.
   public refresh() {
-    if (this.#button.dataset.state === "wrong") {
-      this.#result = keepUserText(this.#text, this.#result, settings.dictionary, settings.ignored);
-      this.#showResult();
-    }
+    this.#session.refresh();
   }
 
   #applyHunks(hunks: Hunk[]) {
@@ -1632,9 +1487,7 @@ class Control {
     } finally {
       this.#applying = false;
     }
-    this.#text = this.#readText();
-    this.#setLong();
-    this.#showResult();
+    this.#session.edit(this.#readText(), { keep: true });
   }
 
   public updatePosition() {
@@ -1670,10 +1523,9 @@ class Control {
   };
 
   #handleWrongClick = () => {
-    if (!this.#result || this.#isCorrect) {
-      return;
+    if (this.#session.hunks.length) {
+      this.#applyHunks(this.#session.hunks);
     }
-    this.#applyHunks(diffHunks(this.#text, this.#result));
   };
 
   #updateButtonVisibility() {
@@ -1697,10 +1549,11 @@ class Control {
   }
 
   get #isCorrect() {
-    return this.#text === this.#result;
+    return this.#session.state.type === "done" && !this.#session.hunks.length;
   }
 
   destroy() {
+    this.#session.stop();
     this.#textObserver?.disconnect();
     this.#button.remove();
     this.#tooltip.destroy();
@@ -1833,7 +1686,7 @@ const main = async () => {
     }
   });
 
-  const providers = [new OllamaProvider(), new GeminiProvider()];
+  const providers = [ollama, gemini];
 
   let provider: Provider | null = null;
 
@@ -1843,10 +1696,7 @@ const main = async () => {
       break;
     }
   }
-  debug(
-    "provider",
-    provider instanceof OllamaProvider ? "ollama" : provider ? "chrome built-in" : "none",
-  );
+  debug("provider", provider?.name ?? "none");
 
   const observer = new MutationObserver(() => {
     if (control?.textArea && !document.body.contains(control?.textArea)) {

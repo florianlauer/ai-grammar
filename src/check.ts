@@ -1,4 +1,6 @@
-// The extension's grammar check and rewrites, without the DOM.
+// The grammar check, rewrites and formality meter, without the DOM or a model client. Each host
+// passes its own `generate`: the extension's service worker, the desktop app's Rust side, the
+// benchmarks' fetch, a fake in tests.
 import { z } from "zod";
 import {
   formalityPrompt,
@@ -8,24 +10,49 @@ import {
   rewriteSchema,
   tones,
   type Tone,
-} from "../../src/prompts.ts";
-import type { Settings } from "../../src/settings.ts";
-import { keepUserText, languageOf, prepareRewrite, splitCheckable } from "../../src/contentScript/text.ts";
-import { generate } from "./api.ts";
+} from "./prompts.ts";
+import type { Settings } from "./settings.ts";
+import { keepUserText, languageOf, prepareRewrite, splitCheckable } from "./contentScript/text.ts";
+
+// A new request on a channel cancels the previous one on that channel, in the same tab or window.
+export type Channel = "check" | "fix" | "rewrite" | "meter";
+
+// The model's parsed JSON answer to `prompt`, shaped by `schema`. Gemini has one model and ignores `model`.
+export type Generate = (request: {
+  channel: Channel;
+  model: string;
+  prompt: string;
+  schema: Record<string, unknown>;
+}) => Promise<unknown>;
 
 const corrected = z.object({ correctedText: z.string() });
 const correctedSchema = z.toJSONSchema(corrected, { target: "draft-7" });
 const rewriteOutput = z.object({ variants: z.array(z.string()) });
 const formalityOutput = z.object({ formality: z.number().int().min(1).max(5) });
 
+// rarely works with single words
+const enough = (core: string) => core.split(/\s+/).length >= 2;
+
+// Whether `check` would ask the model, so a host can skip its loading state.
+export const worthChecking = (text: string) => enough(splitCheckable(text).core);
+
 // The corrected text, or null when there's too little to check.
-export const check = async ({ text, settings, channel }: { text: string; settings: Settings; channel: string }) => {
+export const check = async ({
+  text,
+  settings,
+  generate,
+  channel = "check",
+}: {
+  text: string;
+  settings: Settings;
+  generate: Generate;
+  channel?: Channel;
+}) => {
   const { before, core, after } = splitCheckable(text);
-  // rarely works with single words
-  if (core.split(/\s+/).length < 2) {
+  if (!enough(core)) {
     return null;
   }
-  const json = await generate({ channel, model: settings.model, prompt: grammarPrompt(core, settings), format: correctedSchema });
+  const json = await generate({ channel, model: settings.model, prompt: grammarPrompt(core, settings), schema: correctedSchema });
   const fixed = corrected.parse(json).correctedText.trim();
   return before + keepUserText(core, fixed, settings.dictionary, settings.ignored) + after;
 };
@@ -34,9 +61,9 @@ export const check = async ({ text, settings, channel }: { text: string; setting
 export const tonesFor = (text: string) =>
   (Object.keys(tones) as Tone[]).filter((t) => t !== "natural" || languageOf(text) === "English");
 
+// The text a selection was taken from, and where it starts there.
 type Field = { text: string; start: number };
 
-// `field` is the text around the selection, when the app gives it, as the extension has it.
 const prepare = ({ text, tone, field }: { text: string; tone: Tone; field?: Field | null }) =>
   prepareRewrite({ all: field?.text ?? text, start: field?.start ?? 0, text, tone });
 
@@ -44,29 +71,34 @@ const prepare = ({ text, tone, field }: { text: string; tone: Tone; field?: Fiel
 export const fitSelection = ({ text, field }: { text: string; field?: Field | null }) =>
   prepare({ text, tone: "clearer", field }).fit;
 
+// Variants that passed the checks, and notes to show under them.
+export type Rewrite = { variants: string[]; notes: string[] };
+
 export const rewrite = async ({
   text,
   tone,
   settings,
   field,
+  generate,
 }: {
   text: string;
   tone: Tone;
   settings: Settings;
   field?: Field | null;
-}) => {
+  generate: Generate;
+}): Promise<Rewrite> => {
   const { request, falseFriends, keep } = prepare({ text, tone, field });
   const json = await generate({
     channel: "rewrite",
     model: settings.model,
     prompt: rewritePrompt({ ...request, settings }),
-    format: rewriteSchema,
+    schema: rewriteSchema,
   });
   return { variants: keep(rewriteOutput.parse(json).variants, settings.dictionary), notes: falseFriends };
 };
 
 // How formal the text sounds, 1 to 5, on its own channel so it doesn't cancel the rewrite.
-export const formality = async ({ text, settings }: { text: string; settings: Settings }) => {
-  const json = await generate({ channel: "meter", model: settings.model, prompt: formalityPrompt(text.trim()), format: formalitySchema });
+export const formality = async ({ text, settings, generate }: { text: string; settings: Settings; generate: Generate }) => {
+  const json = await generate({ channel: "meter", model: settings.model, prompt: formalityPrompt(text.trim()), schema: formalitySchema });
   return formalityOutput.parse(json).formality;
 };

@@ -1,15 +1,10 @@
-// Benchmarks local Ollama models on the grammar-fix task used by the extension.
+// Benchmarks local Ollama models on the grammar check, through the same src/check.ts as the
+// extension and the desktop app.
 // Usage: node bench/grammar-bench.mjs model1 model2 ...
+import { check as checkText } from "../src/check.ts";
+import { defaultSettings } from "../src/settings.ts";
+
 const OLLAMA = "http://127.0.0.1:11434";
-
-const prompt = (text) =>
-  `Fix the spelling, grammar and punctuation of the text below. Typos may be missing letters, apostrophes or accents: use the surrounding context to recover the intended word. Keep the original language, meaning, tone and technical terms; change as little as possible. If the text is already correct, return it unchanged.\n\nText:\n${text}`;
-
-const schema = {
-  type: "object",
-  properties: { correctedText: { type: "string" } },
-  required: ["correctedText"],
-};
 
 // must: every regex has to match; mustNot: none may match (meaning changes, translated jargon...)
 const basicCases = [
@@ -45,14 +40,19 @@ const handwrittenCases = [
 
 const cases = process.env.CASES === "handwritten" ? handwrittenCases : basicCases;
 
-const generate = async (model, text, think) => {
-  const body = { model, prompt: prompt(text), format: schema, stream: false, options: { temperature: 0 } };
+// src/check.ts's Generate, over HTTP
+const ollama = (think) => async ({ model, prompt, schema }) => {
+  const body = { model, prompt, format: schema, stream: false, options: { temperature: 0 } };
   if (think !== undefined) body.think = think;
   const res = await fetch(`${OLLAMA}/api/generate`, { method: "POST", body: JSON.stringify(body) });
   const json = await res.json();
   if (json.error) throw new Error(json.error);
-  return json;
+  return JSON.parse(json.response);
 };
+
+// what the user would see, with the default settings
+const fix = async (model, text, think) =>
+  (await checkText({ text, settings: { ...defaultSettings, model }, generate: ollama(think) })) ?? text;
 
 // markdown would end up verbatim in the input
 const globalMustNot = [/\*\*/];
@@ -77,11 +77,11 @@ for (const model of process.argv.slice(2)) {
   // thinking models are too slow for as-you-type checks; not every model accepts the flag
   let think = false;
   try {
-    await generate(model, cases[0].text, think); // warm-up, loads the model
+    await fix(model, cases[0].text, think); // warm-up, loads the model
   } catch (e) {
     if (!/think/i.test(e.message)) throw e;
     think = undefined;
-    await generate(model, cases[0].text, think);
+    await fix(model, cases[0].text, think);
   }
 
   let passed = 0;
@@ -93,7 +93,7 @@ for (const model of process.argv.slice(2)) {
     const t = performance.now();
     let out;
     try {
-      out = JSON.parse((await generate(model, c.text, think)).response).correctedText;
+      out = await fix(model, c.text, think);
     } catch (e) {
       out = `<error: ${e.message}>`;
     }
