@@ -2,7 +2,7 @@
 // extension runs before it shows a variant (src/contentScript/text.ts).
 // Usage: node bench/rewrite-bench.mjs model1 model2 ...
 import { writeFileSync } from "node:fs";
-import { fitFragment, isFragment, rejectVariant, sentenceAround } from "../src/contentScript/text.ts";
+import { prepareRewrite, rejectVariant } from "../src/contentScript/text.ts";
 import { rewritePrompt, rewriteSchema } from "../src/prompts.ts";
 import { defaultSettings } from "../src/settings.ts";
 
@@ -30,18 +30,14 @@ const generate = async (model, prompt) => {
   return JSON.parse(json.response).variants;
 };
 
-// Same path as the extension: the sentence around a part, the fragment fixes, then the checks.
+// Same request and fixes as src/check.ts's rewrite, but every variant comes back, with the
+// reason the checks would drop it.
 const rewrite = async (model, { text, part = text }) => {
-  const start = text.indexOf(part);
-  const context = sentenceAround(text, start, start + part.length);
-  const fragment = isFragment(context);
-  const raw = await generate(
-    model,
-    rewritePrompt({ text: part, settings: defaultSettings, context: fragment ? context : null }),
-  );
+  const { request, fit } = prepareRewrite({ all: text, start: text.indexOf(part), text: part, tone: "clearer" });
+  const raw = await generate(model, rewritePrompt({ ...request, settings: defaultSettings }));
   return raw.map((v) => {
-    const out = fitFragment(v, { part, ...context });
-    return { out, rejected: rejectVariant(part, out) };
+    const out = fit(v);
+    return { out, rejected: rejectVariant(request.text, out) };
   });
 };
 

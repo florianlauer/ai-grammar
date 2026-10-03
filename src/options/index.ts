@@ -1,4 +1,3 @@
-import type { ListResponse } from "ollama/browser";
 import "../contentScript/overlay.css";
 import "./options.css";
 import {
@@ -11,6 +10,7 @@ import {
   Settings,
   Style,
 } from "../settings";
+import { send } from "../messages";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -155,7 +155,7 @@ $<HTMLSelectElement>("model").addEventListener("change", async (e) => {
   select.disabled = true;
   await saveSettings({ model: to });
 
-  const response: { ok: true } | { error: string } | null = await chrome.runtime.sendMessage({
+  const response = await send({
     type: "ollama.switch",
     data: { from: models?.includes(from) ? from : null, to },
   });
@@ -192,7 +192,7 @@ const init = async () => {
   settings = await loadSettings();
   render();
 
-  const list: ListResponse | null = await chrome.runtime.sendMessage({ type: "ollama.list" });
+  const list = await send({ type: "ollama.list" });
   models = list ? list.models.map((m) => m.name).sort() : null;
   renderModel();
 };

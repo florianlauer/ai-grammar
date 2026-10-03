@@ -1,6 +1,6 @@
 {
   "extends": "../tsconfig.json",
-  "include": ["src", "../src/settings.ts", "../src/prompts.ts", "../src/falseFriends.ts", "../src/contentScript/text.ts", "../src/contentScript/render.ts", "../src/options/index.ts"],
+  "include": ["src", "../src/check.ts", "../src/messages.ts", "../src/session.ts", "../src/settings.ts", "../src/prompts.ts", "../src/falseFriends.ts", "../src/contentScript/text.ts", "../src/contentScript/render.ts", "../src/options/index.ts"],
   "exclude": [],
   "references": []
 }
